@@ -93,7 +93,15 @@ export class Auth {
   /**
    * Register a new user with email/password
    */
-  async register(email: string, password: string, metadata?: { userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
+  async register(
+    email: string, 
+    password: string, 
+    metadata?: { 
+      userAgent?: string; 
+      ipAddress?: string;
+      userData?: Record<string, any>;
+    }
+  ): Promise<AuthResult> {
     try {
       // Check if user exists
       const existing = await this.db.getUserByEmail(email);
@@ -101,8 +109,8 @@ export class Auth {
         return { success: false, error: 'User already exists' };
       }
 
-      // Create user
-      const user = await this.db.createUser(email);
+      // Create user with metadata
+      const user = await this.db.createUser(email, metadata?.userData);
 
       // Hash password and create credential
       const salt = Array.from(this.crypto.randomBytes(16))
@@ -247,7 +255,11 @@ export class Auth {
   /**
    * Generate a verification token for email/phone verification
    */
-  async generateVerificationToken(identifier: string): Promise<string> {
+  async generateVerificationToken(
+    identifier: string,
+    type: "email" | "password_reset" = "email",
+    metadata?: Record<string, any>
+  ): Promise<string> {
     // Generate random 6 digit code
     const token = Array.from(this.crypto.randomBytes(3))
       .map(b => b.toString(16).padStart(2, '0'))
@@ -256,7 +268,7 @@ export class Auth {
     
     // Store verification token
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-    await this.db.createVerificationToken(identifier, token, expiresAt);
+    await this.db.createVerificationToken(identifier, token, type, expiresAt, metadata);
 
     return token;
   }

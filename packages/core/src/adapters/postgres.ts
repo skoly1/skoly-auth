@@ -30,6 +30,9 @@ export class PostgresAdapter implements DatabaseAdapter {
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         email TEXT UNIQUE NOT NULL,
+        email_verified_at TIMESTAMP WITH TIME ZONE,
+        active BOOLEAN DEFAULT true,
+        metadata JSONB,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -66,24 +69,51 @@ export class PostgresAdapter implements DatabaseAdapter {
       CREATE TABLE IF NOT EXISTS auth_verification_tokens (
         identifier TEXT NOT NULL,
         token TEXT NOT NULL,
+        type TEXT NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        metadata JSONB,
         PRIMARY KEY (identifier, token)
       );
     `);
   }
 
-  async createUser(email: string): Promise<User> {
+  async createUser(email: string, metadata?: Record<string, any>): Promise<User> {
     const result = await this.pool.query(
-      'INSERT INTO users (email) VALUES ($1) RETURNING *',
-      [email.toLowerCase()]
+      'INSERT INTO users (email, metadata) VALUES ($1, $2) RETURNING *',
+      [email.toLowerCase(), metadata ? JSON.stringify(metadata) : null]
     );
     
     return {
       id: result.rows[0].id,
       email: result.rows[0].email,
+      active: result.rows[0].active,
+      emailVerifiedAt: result.rows[0].email_verified_at,
+      metadata: result.rows[0].metadata,
       createdAt: result.rows[0].created_at
     };
+  }
+
+  async createUsers(emails: string[]): Promise<User[]> {
+    const values = emails.map((email, i) => 
+      `($${i + 1}, CURRENT_TIMESTAMP)`
+    ).join(',');
+    
+    const result = await this.pool.query(
+      `INSERT INTO users (email, created_at)
+       VALUES ${values}
+       RETURNING *`,
+      emails.map(email => email.toLowerCase())
+    );
+    
+    return result.rows.map(row => ({
+      id: row.id,
+      email: row.email,
+      active: row.active,
+      emailVerifiedAt: row.email_verified_at,
+      metadata: row.metadata,
+      createdAt: row.created_at
+    }));
   }
 
   async getUserById(id: string): Promise<User | null> {
@@ -97,6 +127,9 @@ export class PostgresAdapter implements DatabaseAdapter {
     return {
       id: result.rows[0].id,
       email: result.rows[0].email,
+      active: result.rows[0].active,
+      emailVerifiedAt: result.rows[0].email_verified_at,
+      metadata: result.rows[0].metadata,
       createdAt: result.rows[0].created_at
     };
   }
@@ -112,8 +145,147 @@ export class PostgresAdapter implements DatabaseAdapter {
     return {
       id: result.rows[0].id,
       email: result.rows[0].email,
+      active: result.rows[0].active,
+      emailVerifiedAt: result.rows[0].email_verified_at,
+      metadata: result.rows[0].metadata,
       createdAt: result.rows[0].created_at
     };
+  }
+
+  async updateUser(id: string, data: Partial<User>): Promise<User> {
+    const setFields = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (data.email !== undefined) {
+      setFields.push(`email = $${paramCount}`);
+      values.push(data.email.toLowerCase());
+      paramCount++;
+    }
+    if (data.active !== undefined) {
+      setFields.push(`active = $${paramCount}`);
+      values.push(data.active);
+      paramCount++;
+    }
+    if (data.emailVerifiedAt !== undefined) {
+      setFields.push(`email_verified_at = $${paramCount}`);
+      values.push(data.emailVerifiedAt);
+      paramCount++;
+    }
+    if (data.metadata !== undefined) {
+      setFields.push(`metadata = $${paramCount}`);
+      values.push(JSON.stringify(data.metadata));
+      paramCount++;
+    }
+
+    values.push(id);
+    const result = await this.pool.query(
+      `UPDATE users 
+       SET ${setFields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+
+    return {
+      id: result.rows[0].id,
+      email: result.rows[0].email,
+      active: result.rows[0].active,
+      emailVerifiedAt: result.rows[0].email_verified_at,
+      metadata: result.rows[0].metadata,
+      createdAt: result.rows[0].created_at
+    };
+  }
+
+  async setUserMetadata(id: string, metadata: Record<string, any>): Promise<void> {
+    await this.pool.query(
+      'UPDATE users SET metadata = $1 WHERE id = $2',
+      [JSON.stringify(metadata), id]
+    );
+  }
+
+  async deleteCredentials(userId: string): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM auth_credentials WHERE user_id = $1',
+      [userId]
+    );
+  }
+
+  async deleteSessions(userId: string): Promise<void> {
+    await this.pool.query(
+      'DELETE FROM auth_sessions WHERE user_id = $1',
+      [userId]
+    );
+  }
+
+  async transaction<T>(callback: (trx: DatabaseAdapter) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    
+    // Create a transaction-scoped adapter that uses the client directly
+    const trxAdapter: DatabaseAdapter = {
+      ...this,
+      // Override methods to use transaction client instead of pool
+      createUser: async (...args) => {
+        const result = await client.query(
+          'INSERT INTO users (email, metadata) VALUES ($1, $2) RETURNING *',
+          [args[0].toLowerCase(), args[1] ? JSON.stringify(args[1]) : null]
+        );
+        return {
+          id: result.rows[0].id,
+          email: result.rows[0].email,
+          active: result.rows[0].active,
+          emailVerifiedAt: result.rows[0].email_verified_at,
+          metadata: result.rows[0].metadata,
+          createdAt: result.rows[0].created_at
+        };
+      },
+      // Add other method overrides as needed
+      transaction: async (cb) => cb(trxAdapter) // Support nested transactions
+    };
+
+    try {
+      await client.query('BEGIN');
+      const result = await callback(trxAdapter);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Revoke all tokens
+      await client.query(
+        'UPDATE auth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1',
+        [id]
+      );
+      
+      // Delete sessions
+      await client.query(
+        'DELETE FROM auth_sessions WHERE user_id = $1',
+        [id]  
+      );
+      
+      // Delete user
+      await client.query(
+        'DELETE FROM users WHERE id = $1',
+        [id]
+      );
+      
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createCredential(
@@ -301,12 +473,14 @@ export class PostgresAdapter implements DatabaseAdapter {
   async createVerificationToken(
     identifier: string,
     token: string,
-    expiresAt: Date
+    type: "email" | "password_reset",
+    expiresAt: Date,
+    metadata?: Record<string, any>
   ): Promise<void> {
     await this.pool.query(
-      `INSERT INTO auth_verification_tokens (identifier, token, expires_at)
-       VALUES ($1, $2, $3)`,
-      [identifier, token, expiresAt]
+      `INSERT INTO auth_verification_tokens (identifier, token, type, expires_at, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [identifier, token, type, expiresAt, metadata ? JSON.stringify(metadata) : null]
     );
   }
 
