@@ -15,7 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "jose": "^5.2.0"
+    "jose": "^5.9.6"
   },
   "peerDependencies": {
     "pg": "^8.11.3"

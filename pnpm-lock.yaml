@@ -52,7 +52,7 @@ importers:
   packages/core:
     dependencies:
       jose:
-        specifier: ^5.2.0
+        specifier: ^5.9.6
         version: 5.9.6
     devDependencies:
       '@types/express':

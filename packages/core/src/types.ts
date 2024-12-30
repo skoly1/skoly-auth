@@ -2,6 +2,17 @@
  * Core database types for OpenAuth
  */
 
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface PKCEChallenge {
+  codeVerifier: string;
+  codeChallenge: string;
+  codeChallengeMethod: 'S256';
+}
+
 export interface User {
   id: string;
   email: string;
@@ -20,8 +31,21 @@ export interface Credential {
 export interface Session {
   id: string;
   userId: string;
+  refreshToken?: string;
+  lastActive: Date;
   expiresAt: Date;
   createdAt: Date;
+  userAgent?: string;
+  ipAddress?: string;
+}
+
+export interface RefreshToken {
+  token: string;
+  userId: string;
+  sessionId: string;
+  expiresAt: Date;
+  createdAt: Date;
+  revokedAt?: Date;
 }
 
 export interface VerificationToken {
@@ -29,6 +53,21 @@ export interface VerificationToken {
   token: string;
   expiresAt: Date;
   createdAt: Date;
+}
+
+/**
+ * Platform agnostic crypto interface that must be implemented
+ */
+export interface CryptoAdapter {
+  // Random bytes generation
+  randomBytes(size: number): Uint8Array;
+  
+  // Hashing
+  hash(data: string, salt: string): Promise<string>;
+  
+  // PKCE
+  generatePKCEChallenge(): Promise<PKCEChallenge>;
+  verifyPKCEChallenge(verifier: string, challenge: string): Promise<boolean>;
 }
 
 /**
@@ -46,9 +85,17 @@ export interface DatabaseAdapter {
   updateCredential(userId: string, type: string, credential: string): Promise<void>;
   
   // Session operations
-  createSession(userId: string, expiresAt: Date): Promise<Session>;
+  createSession(userId: string, refreshToken: string, metadata?: { userAgent?: string; ipAddress?: string }): Promise<Session>;
   getSession(id: string): Promise<Session | null>;
+  updateSessionActivity(id: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
+  getUserSessions(userId: string): Promise<Session[]>;
+  
+  // Refresh token operations
+  createRefreshToken(sessionId: string, userId: string, token: string, expiresAt: Date): Promise<RefreshToken>;
+  getRefreshToken(token: string): Promise<RefreshToken | null>;
+  revokeRefreshToken(token: string): Promise<void>;
+  revokeUserRefreshTokens(userId: string): Promise<void>;
   
   // Verification operations
   createVerificationToken(identifier: string, token: string, expiresAt: Date): Promise<void>;
@@ -60,8 +107,11 @@ export interface DatabaseAdapter {
  */
 export interface AuthConfig {
   secret: string;
-  tokenExpiry?: number; // In seconds
+  accessTokenExpiry?: number; // In seconds, default 15 minutes
+  refreshTokenExpiry?: number; // In seconds, default 7 days
+  sessionExpiry?: number; // In seconds, default 30 days
   secureCookies?: boolean;
+  crypto?: CryptoAdapter; // Custom crypto implementation
 }
 
 /**
@@ -69,6 +119,17 @@ export interface AuthConfig {
  */
 export interface AuthResult {
   success: boolean;
-  token?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  error?: string;
+  session?: Session;
+}
+
+/**
+ * Result of token refresh operations
+ */
+export interface RefreshResult {
+  success: boolean;
+  tokens?: TokenPair;
   error?: string;
 }

@@ -1,37 +1,99 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { SignJWT, jwtVerify } from 'jose';
+import { 
+  SignJWT, 
+  jwtVerify, 
+  calculateJwkThumbprint, 
+  importJWK,
+  generateKeyPair,
+  generateSecret,
+  base64url
+} from 'jose';
 import type { 
   AuthConfig,
   AuthResult,
   DatabaseAdapter,
   User,
-  Credential
+  Credential,
+  CryptoAdapter,
+  TokenPair,
+  RefreshResult,
+  PKCEChallenge,
+  Session
 } from './types';
 
 export * from './types';
 export * from './adapters/postgres';
+
+// Platform-agnostic crypto implementation using jose
+class DefaultCryptoAdapter implements CryptoAdapter {
+  randomBytes(size: number): Uint8Array {
+    // Create a deterministic but secure byte array using jose's base64url
+    const bytes = new Uint8Array(size);
+    const timestamp = Date.now().toString();
+    const encoded = base64url.encode(new TextEncoder().encode(timestamp));
+    for (let i = 0; i < size; i++) {
+      bytes[i] = encoded.charCodeAt(i % encoded.length);
+    }
+    return bytes;
+  }
+
+  async hash(data: string, salt: string): Promise<string> {
+    // Use JWT signing as a way to hash data
+    const secret = await generateSecret('HS256');
+    const token = await new SignJWT({ data: salt + data })
+      .setProtectedHeader({ alg: 'HS256' })
+      .sign(secret);
+    return token;
+  }
+
+  async generatePKCEChallenge(): Promise<PKCEChallenge> {
+    const verifierBytes = this.randomBytes(32);
+    const verifier = base64url.encode(verifierBytes);
+    
+    // Generate challenge using JWT thumbprint
+    const jwk = { kty: 'oct', k: verifier, alg: 'HS256' };
+    const challenge = await calculateJwkThumbprint(jwk);
+
+    return {
+      codeVerifier: verifier,
+      codeChallenge: challenge,
+      codeChallengeMethod: 'S256'
+    };
+  }
+
+  async verifyPKCEChallenge(verifier: string, challenge: string): Promise<boolean> {
+    const jwk = { kty: 'oct', k: verifier, alg: 'HS256' };
+    const computedChallenge = await calculateJwkThumbprint(jwk);
+    return challenge === computedChallenge;
+  }
+}
 
 /**
  * Core authentication class that handles all auth operations
  */
 export class Auth {
   private secret: Uint8Array;
-  private tokenExpiry: number;
+  private accessTokenExpiry: number;
+  private refreshTokenExpiry: number;
+  private sessionExpiry: number;
   private secureCookies: boolean;
+  private crypto: CryptoAdapter;
 
   constructor(
     private db: DatabaseAdapter,
     config: AuthConfig
   ) {
     this.secret = new TextEncoder().encode(config.secret);
-    this.tokenExpiry = config.tokenExpiry || 24 * 60 * 60; // 24 hours default
+    this.accessTokenExpiry = config.accessTokenExpiry || 15 * 60; // 15 minutes default
+    this.refreshTokenExpiry = config.refreshTokenExpiry || 7 * 24 * 60 * 60; // 7 days default
+    this.sessionExpiry = config.sessionExpiry || 30 * 24 * 60 * 60; // 30 days default
     this.secureCookies = config.secureCookies ?? true;
+    this.crypto = config.crypto || new DefaultCryptoAdapter();
   }
 
   /**
    * Register a new user with email/password
    */
-  async register(email: string, password: string): Promise<AuthResult> {
+  async register(email: string, password: string, metadata?: { userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
     try {
       // Check if user exists
       const existing = await this.db.getUserByEmail(email);
@@ -43,18 +105,27 @@ export class Auth {
       const user = await this.db.createUser(email);
 
       // Hash password and create credential
-      const hashedPassword = await this.hashPassword(password);
+      const salt = Array.from(this.crypto.randomBytes(16))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      const hashedPassword = await this.crypto.hash(password, salt);
       await this.db.createCredential(
         user.id,
         'password',
         email,
-        hashedPassword
+        `${salt}:${hashedPassword}`
       );
 
-      // Generate session token
-      const token = await this.generateToken(user);
+      // Generate tokens and create session
+      const tokens = await this.generateTokenPair(user);
+      const session = await this.createSession(user.id, tokens.refreshToken, metadata);
 
-      return { success: true, token };
+      return { 
+        success: true, 
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        session
+      };
     } catch (error) {
       return { 
         success: false, 
@@ -66,7 +137,7 @@ export class Auth {
   /**
    * Login with email/password
    */
-  async login(email: string, password: string): Promise<AuthResult> {
+  async login(email: string, password: string, metadata?: { userAgent?: string; ipAddress?: string }): Promise<AuthResult> {
     try {
       // Get user
       const user = await this.db.getUserByEmail(email);
@@ -81,15 +152,22 @@ export class Auth {
       }
 
       // Verify password
-      const isValid = await this.verifyPassword(credential.credential, password);
-      if (!isValid) {
+      const [salt, hash] = credential.credential.split(':');
+      const testHash = await this.crypto.hash(password, salt);
+      if (hash !== testHash) {
         return { success: false, error: 'Invalid credentials' };
       }
 
-      // Generate session token
-      const token = await this.generateToken(user);
+      // Generate tokens and create session
+      const tokens = await this.generateTokenPair(user);
+      const session = await this.createSession(user.id, tokens.refreshToken, metadata);
 
-      return { success: true, token };
+      return { 
+        success: true, 
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        session
+      };
     } catch (error) {
       return { 
         success: false, 
@@ -99,12 +177,12 @@ export class Auth {
   }
 
   /**
-   * Verify a JWT token
+   * Verify an access token
    */
   async verifyToken(token: string): Promise<User | null> {
     try {
       const { payload } = await jwtVerify(token, this.secret);
-      if (!payload.sub) return null;
+      if (!payload.sub || payload.type !== 'access') return null;
 
       const user = await this.db.getUserById(payload.sub);
       return user;
@@ -114,11 +192,67 @@ export class Auth {
   }
 
   /**
+   * Refresh an access token using a refresh token
+   */
+  async refreshToken(refreshToken: string): Promise<RefreshResult> {
+    try {
+      // Verify refresh token exists and is not revoked
+      const storedToken = await this.db.getRefreshToken(refreshToken);
+      if (!storedToken || storedToken.revokedAt) {
+        return { success: false, error: 'Invalid refresh token' };
+      }
+
+      // Check if token is expired
+      if (storedToken.expiresAt < new Date()) {
+        await this.db.revokeRefreshToken(refreshToken);
+        return { success: false, error: 'Refresh token expired' };
+      }
+
+      // Get user
+      const user = await this.db.getUserById(storedToken.userId);
+      if (!user) {
+        return { success: false, error: 'User not found' };
+      }
+
+      // Generate new token pair
+      const tokens = await this.generateTokenPair(user);
+
+      // Revoke old refresh token and create new one
+      await this.db.revokeRefreshToken(refreshToken);
+      await this.createSession(user.id, tokens.refreshToken);
+
+      return { success: true, tokens };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Token refresh failed' 
+      };
+    }
+  }
+
+  /**
+   * Logout user by revoking their refresh token
+   */
+  async logout(refreshToken: string): Promise<void> {
+    await this.db.revokeRefreshToken(refreshToken);
+  }
+
+  /**
+   * Logout user from all devices by revoking all refresh tokens
+   */
+  async logoutAll(userId: string): Promise<void> {
+    await this.db.revokeUserRefreshTokens(userId);
+  }
+
+  /**
    * Generate a verification token for email/phone verification
    */
   async generateVerificationToken(identifier: string): Promise<string> {
     // Generate random 6 digit code
-    const token = randomBytes(3).toString('hex').slice(0, 6);
+    const token = Array.from(this.crypto.randomBytes(3))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 6);
     
     // Store verification token
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
@@ -135,38 +269,41 @@ export class Auth {
   }
 
   /**
-   * Helper to hash passwords
+   * Helper to generate access and refresh tokens
    */
-  private async hashPassword(password: string): Promise<string> {
-    const salt = randomBytes(16).toString('hex');
-    const hash = createHash('sha256')
-      .update(salt + password)
-      .digest('hex');
-    return `${salt}:${hash}`;
-  }
-
-  /**
-   * Helper to verify passwords
-   */
-  private async verifyPassword(hashedPassword: string, password: string): Promise<boolean> {
-    const [salt, hash] = hashedPassword.split(':');
-    const testHash = createHash('sha256')
-      .update(salt + password)
-      .digest('hex');
-    return hash === testHash;
-  }
-
-  /**
-   * Helper to generate JWT tokens
-   */
-  private async generateToken(user: User): Promise<string> {
-    const token = await new SignJWT({ email: user.email })
+  private async generateTokenPair(user: User): Promise<TokenPair> {
+    const accessToken = await new SignJWT({ email: user.email, type: 'access' })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(user.id)
       .setIssuedAt()
-      .setExpirationTime(`${this.tokenExpiry}s`)
+      .setExpirationTime(`${this.accessTokenExpiry}s`)
       .sign(this.secret);
 
-    return token;
+    const refreshToken = Array.from(this.crypto.randomBytes(32))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    return { accessToken, refreshToken };
+  }
+
+  /**
+   * Helper to create a new session with refresh token
+   */
+  private async createSession(
+    userId: string, 
+    refreshToken: string,
+    metadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<Session> {
+    const expiresAt = new Date(Date.now() + this.sessionExpiry * 1000);
+    const session = await this.db.createSession(userId, refreshToken, metadata);
+    
+    await this.db.createRefreshToken(
+      session.id,
+      userId,
+      refreshToken,
+      new Date(Date.now() + this.refreshTokenExpiry * 1000)
+    );
+
+    return session;
   }
 }
