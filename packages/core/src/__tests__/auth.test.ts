@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Auth } from '../index';
 import { PostgresAdapter } from '../adapters/postgres';
 
@@ -19,7 +19,10 @@ describe('Auth', () => {
     
     auth = new Auth(db, {
       secret: 'test_secret',
-      tokenExpiry: 3600 // 1 hour
+      accessTokenExpiry: 900, // 15 minutes
+      refreshTokenExpiry: 604800, // 7 days
+      sessionExpiry: 2592000, // 30 days
+      secureCookies: true
     });
   });
 
@@ -28,10 +31,20 @@ describe('Auth', () => {
   });
 
   describe('registration', () => {
-    it('should register a new user', async () => {
-      const result = await auth.register('test@example.com', 'password123');
+    it('should register a new user with metadata', async () => {
+      const result = await auth.register('test@example.com', 'password123', {
+        userAgent: 'Mozilla/5.0',
+        ipAddress: '127.0.0.1',
+        userData: { name: 'Test User' }
+      });
       expect(result.success).toBe(true);
-      expect(result.token).toBeDefined();
+      expect(result.accessToken).toBeDefined();
+      expect(result.refreshToken).toBeDefined();
+      expect(result.session).toBeDefined();
+      if (result.session) {
+        expect(result.session.userAgent).toBe('Mozilla/5.0');
+        expect(result.session.ipAddress).toBe('127.0.0.1');
+      }
     });
 
     it('should not register duplicate email', async () => {
@@ -41,36 +54,75 @@ describe('Auth', () => {
     });
   });
 
-  describe('login', () => {
-    it('should login with correct credentials', async () => {
-      const result = await auth.login('test@example.com', 'password123');
+  describe('login and session management', () => {
+    let refreshToken: string;
+    let userId: string;
+
+    beforeEach(async () => {
+      const email = `user-${Date.now()}@example.com`;
+      const result = await auth.register(email, 'password123');
+      refreshToken = result.refreshToken!;
+      const user = await auth.verifyToken(result.accessToken!);
+      userId = user!.id;
+    });
+
+    it('should login with correct credentials and create session', async () => {
+      const result = await auth.login('test@example.com', 'password123', {
+        userAgent: 'Test Browser',
+        ipAddress: '192.168.1.1'
+      });
       expect(result.success).toBe(true);
-      expect(result.token).toBeDefined();
+      expect(result.accessToken).toBeDefined();
+      expect(result.refreshToken).toBeDefined();
+      expect(result.session).toBeDefined();
+      if (result.session) {
+        expect(result.session.userAgent).toBe('Test Browser');
+        expect(result.session.ipAddress).toBe('192.168.1.1');
+      }
     });
 
-    it('should not login with incorrect password', async () => {
-      const result = await auth.login('test@example.com', 'wrongpassword');
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid credentials');
+    it('should refresh access token', async () => {
+      const result = await auth.refreshToken(refreshToken);
+      expect(result.success).toBe(true);
+      expect(result.tokens?.accessToken).toBeDefined();
+      expect(result.tokens?.refreshToken).toBeDefined();
     });
 
-    it('should not login non-existent user', async () => {
-      const result = await auth.login('nonexistent@example.com', 'password123');
+    it('should not refresh with invalid token', async () => {
+      const result = await auth.refreshToken('invalid-token');
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid credentials');
+      expect(result.error).toBe('Invalid refresh token');
+    });
+
+    it('should logout from single device', async () => {
+      await auth.logout(refreshToken);
+      const refreshResult = await auth.refreshToken(refreshToken);
+      expect(refreshResult.success).toBe(false);
+      expect(refreshResult.error).toBe('Invalid refresh token');
+    });
+
+    it('should logout from all devices', async () => {
+      // Create multiple sessions
+      await auth.login('test@example.com', 'password123', { userAgent: 'Device 1' });
+      await auth.login('test@example.com', 'password123', { userAgent: 'Device 2' });
+      
+      await auth.logoutAll(userId);
+      
+      const refreshResult = await auth.refreshToken(refreshToken);
+      expect(refreshResult.success).toBe(false);
     });
   });
 
   describe('token verification', () => {
-    let userToken: string;
+    let accessToken: string;
 
     beforeAll(async () => {
       const result = await auth.register('token-test@example.com', 'password123');
-      userToken = result.token!;
+      accessToken = result.accessToken!;
     });
 
-    it('should verify valid token', async () => {
-      const user = await auth.verifyToken(userToken);
+    it('should verify valid access token', async () => {
+      const user = await auth.verifyToken(accessToken);
       expect(user).toBeDefined();
       expect(user?.email).toBe('token-test@example.com');
     });
@@ -82,11 +134,22 @@ describe('Auth', () => {
   });
 
   describe('verification tokens', () => {
-    it('should generate and verify token', async () => {
+    it('should generate and verify email verification token', async () => {
       const identifier = 'verify@example.com';
-      const token = await auth.generateVerificationToken(identifier);
+      const token = await auth.generateVerificationToken(identifier, 'email');
       expect(token).toBeDefined();
       expect(token.length).toBe(6);
+
+      const isValid = await auth.verifyVerificationToken(identifier, token);
+      expect(isValid).toBe(true);
+    });
+
+    it('should generate and verify password reset token', async () => {
+      const identifier = 'reset@example.com';
+      const token = await auth.generateVerificationToken(identifier, 'password_reset', {
+        requestedAt: new Date()
+      });
+      expect(token).toBeDefined();
 
       const isValid = await auth.verifyVerificationToken(identifier, token);
       expect(isValid).toBe(true);

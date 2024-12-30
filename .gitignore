@@ -42,3 +42,5 @@ openauth/
 docs/
 
 *.turbo
+
+skoly-auth-test/
