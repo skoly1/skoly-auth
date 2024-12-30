@@ -26,13 +26,9 @@ export * from "./adapters/postgres";
 // Platform-agnostic crypto implementation using jose
 class DefaultCryptoAdapter implements CryptoAdapter {
   randomBytes(size: number): Uint8Array {
-    // Create a deterministic but secure byte array using jose's base64url
+    // Use crypto.getRandomValues for true randomness
     const bytes = new Uint8Array(size);
-    const timestamp = Date.now().toString();
-    const encoded = base64url.encode(new TextEncoder().encode(timestamp));
-    for (let i = 0; i < size; i++) {
-      bytes[i] = encoded.charCodeAt(i % encoded.length);
-    }
+    crypto.getRandomValues(bytes);
     return bytes;
   }
 
@@ -277,11 +273,14 @@ export class Auth {
     type: "email" | "password_reset" = "email",
     metadata?: Record<string, any>
   ): Promise<string> {
-    // Generate random 6 digit code
-    const token = Array.from(this.crypto.randomBytes(3))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")
-      .slice(0, 6);
+    // Generate random 6 digit number (100000-999999)
+    const randomBytes = this.crypto.randomBytes(4);
+    const number =
+      ((randomBytes[0] |
+        (randomBytes[1] << 8) |
+        (randomBytes[2] << 16) |
+        ((randomBytes[3] & 0x7F) << 24)) >>> 0) % 900000 + 100000;
+    const token = number.toString();
 
     // Store verification token
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes

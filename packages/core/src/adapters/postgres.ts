@@ -67,14 +67,18 @@ export class PostgresAdapter implements DatabaseAdapter {
       );
 
       CREATE TABLE IF NOT EXISTS auth_verification_tokens (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         identifier TEXT NOT NULL,
         token TEXT NOT NULL,
         type TEXT NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        metadata JSONB,
-        PRIMARY KEY (identifier, token)
+        metadata JSONB
       );
+      
+      -- Index for faster lookups and soft uniqueness
+      CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_identifier 
+      ON auth_verification_tokens(identifier);
     `);
   }
 
@@ -476,17 +480,44 @@ export class PostgresAdapter implements DatabaseAdapter {
     expiresAt: Date,
     metadata?: Record<string, any>
   ): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO auth_verification_tokens (identifier, token, type, expires_at, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        identifier,
-        token,
-        type,
-        expiresAt,
-        metadata ? JSON.stringify(metadata) : null,
-      ]
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Delete any existing tokens for this identifier
+      await client.query(
+        `DELETE FROM auth_verification_tokens 
+         WHERE identifier = $1`,
+        [identifier]
+      );
+
+      // Create new token
+      await client.query(
+        `INSERT INTO auth_verification_tokens (identifier, token, type, expires_at, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          identifier,
+          token,
+          type,
+          expiresAt,
+          metadata ? JSON.stringify(metadata) : null,
+        ]
+      );
+
+      // Cleanup expired tokens older than 24 hours
+      await client.query(
+        `DELETE FROM auth_verification_tokens 
+         WHERE expires_at < CURRENT_TIMESTAMP 
+         AND created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'`
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async useVerificationToken(

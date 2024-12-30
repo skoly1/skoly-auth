@@ -159,7 +159,9 @@ authRoutes.post("/refresh", async (c) => {
 
 // Protected endpoint example
 authRoutes.get("/me", async (c) => {
-  const user = await auth.verifyToken(c.req.header("Authorization")?.split(" ")[1] || "");
+  const user = await auth.verifyToken(
+    c.req.header("Authorization")?.split(" ")[1] || ""
+  );
 
   if (!user) {
     return c.json(
@@ -307,6 +309,7 @@ export function createApp() {
         error: {
           code: "INTERNAL_SERVER_ERROR",
           message: "An unexpected error occurred",
+          error: err.message,
         },
       },
       500
