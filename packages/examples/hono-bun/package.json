@@ -1,0 +1,14 @@
+{
+  "name": "@skoly/openauth-examples",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot hono.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.15"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
