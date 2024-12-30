@@ -1,0 +1,20 @@
+{
+  "name": "skoly-auth-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.2",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "prettier": "^3.4.2",
+    "turbo": "latest",
+    "typescript": "^5.7.2"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
+}
