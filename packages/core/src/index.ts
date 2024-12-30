@@ -37,9 +37,9 @@ class DefaultCryptoAdapter implements CryptoAdapter {
   }
 
   async hash(data: string, salt: string): Promise<string> {
-    // Use JWT signing as a way to hash data
-    const secret = await generateSecret("HS256");
-    const token = await new SignJWT({ data: salt + data })
+    // Use the salt as a consistent secret key for hashing
+    const secret = new TextEncoder().encode(salt);
+    const token = await new SignJWT({ data })
       .setProtectedHeader({ alg: "HS256" })
       .sign(secret);
     return token;
@@ -174,11 +174,7 @@ export class Auth {
       // Verify password
       const [salt, hash] = credential.credential.split(":");
       const testHash = await this.crypto.hash(password, salt);
-      console.log(testHash);
 
-      console.log(hash);
-
-      console.log(hash !== testHash);
       if (hash !== testHash) {
         return { success: false, error: "Invalid credentials" };
       }
