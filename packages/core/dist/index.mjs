@@ -1,4 +1,5 @@
-import { jwtVerify, SignJWT, base64url, generateSecret, calculateJwkThumbprint } from 'jose';
+import { jwtVerify, SignJWT, base64url, calculateJwkThumbprint } from 'jose';
+import * as bcrypt from 'bcrypt';
 
 var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
@@ -10,7 +11,25 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 // src/adapters/postgres.ts
 var PostgresAdapter = class {
   constructor(config) {
-    this.pool = new (__require("pg")).Pool(config);
+    if (!config) {
+      throw new Error("Database configuration is required");
+    }
+    if (!config.database) {
+      throw new Error("Database name is required in configuration");
+    }
+    const poolConfig = {
+      ...config,
+      max: config.max || 20,
+      // Maximum pool size
+      idleTimeoutMillis: config.idleTimeoutMillis || 3e4,
+      // Close idle connections after 30s
+      connectionTimeoutMillis: config.connectionTimeoutMillis || 2e3
+      // Connection timeout
+    };
+    this.pool = new (__require("pg")).Pool(poolConfig);
+    this.pool.on("error", (err) => {
+      console.error("Unexpected error on idle client", err);
+    });
   }
   /**
    * Initialize database with required tables
@@ -24,8 +43,12 @@ var PostgresAdapter = class {
         email_verified_at TIMESTAMP WITH TIME ZONE,
         active BOOLEAN DEFAULT true,
         metadata JSONB,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP WITH TIME ZONE
       );
+
+      -- Index for soft deletes
+      CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NULL;
 
       CREATE TABLE IF NOT EXISTS auth_credentials (
         user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -39,14 +62,19 @@ var PostgresAdapter = class {
 
       CREATE TABLE IF NOT EXISTS auth_sessions (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-        refresh_token TEXT,
-        last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        refresh_token TEXT NOT NULL,
+        last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         user_agent TEXT,
-        ip_address TEXT
+        ip_address TEXT,
+        deleted_at TIMESTAMP WITH TIME ZONE
       );
+
+      -- Index for faster session lookups by user
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id 
+      ON auth_sessions(user_id);
 
       CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
         token TEXT PRIMARY KEY,
@@ -57,18 +85,29 @@ var PostgresAdapter = class {
         revoked_at TIMESTAMP WITH TIME ZONE
       );
 
+      -- Index for faster token lookups by user
+      CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_user_id 
+      ON auth_refresh_tokens(user_id);
+
       CREATE TABLE IF NOT EXISTS auth_verification_tokens (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         identifier TEXT NOT NULL,
         token TEXT NOT NULL,
         type TEXT NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        metadata JSONB,
-        PRIMARY KEY (identifier, token)
+        metadata JSONB
       );
+      
+      -- Index for faster lookups and soft uniqueness
+      CREATE INDEX IF NOT EXISTS idx_auth_verification_tokens_identifier 
+      ON auth_verification_tokens(identifier);
     `);
   }
   async createUser(email, metadata) {
+    if (!email) {
+      throw new Error("Email is required");
+    }
     const result = await this.pool.query(
       "INSERT INTO users (email, metadata) VALUES ($1, $2) RETURNING *",
       [email.toLowerCase(), metadata ? JSON.stringify(metadata) : null]
@@ -83,9 +122,7 @@ var PostgresAdapter = class {
     };
   }
   async createUsers(emails) {
-    const values = emails.map(
-      (email, i) => `($${i + 1}, CURRENT_TIMESTAMP)`
-    ).join(",");
+    const values = emails.map((email, i) => `($${i + 1}, CURRENT_TIMESTAMP)`).join(",");
     const result = await this.pool.query(
       `INSERT INTO users (email, created_at)
        VALUES ${values}
@@ -102,8 +139,17 @@ var PostgresAdapter = class {
     }));
   }
   async getUserById(id) {
+    if (!id) {
+      throw new Error("User ID is required");
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      id
+    )) {
+      throw new Error("Invalid UUID format for user ID");
+    }
+    console.log(`Getting user by ID: ${id}`);
     const result = await this.pool.query(
-      "SELECT * FROM users WHERE id = $1",
+      "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL",
       [id]
     );
     if (result.rows.length === 0) return null;
@@ -117,8 +163,9 @@ var PostgresAdapter = class {
     };
   }
   async getUserByEmail(email) {
+    console.log(`Getting user by email: ${email}`);
     const result = await this.pool.query(
-      "SELECT * FROM users WHERE email = $1",
+      "SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL",
       [email.toLowerCase()]
     );
     if (result.rows.length === 0) return null;
@@ -173,22 +220,20 @@ var PostgresAdapter = class {
     };
   }
   async setUserMetadata(id, metadata) {
-    await this.pool.query(
-      "UPDATE users SET metadata = $1 WHERE id = $2",
-      [JSON.stringify(metadata), id]
-    );
+    await this.pool.query("UPDATE users SET metadata = $1 WHERE id = $2", [
+      JSON.stringify(metadata),
+      id
+    ]);
   }
   async deleteCredentials(userId) {
-    await this.pool.query(
-      "DELETE FROM auth_credentials WHERE user_id = $1",
-      [userId]
-    );
+    await this.pool.query("DELETE FROM auth_credentials WHERE user_id = $1", [
+      userId
+    ]);
   }
   async deleteSessions(userId) {
-    await this.pool.query(
-      "DELETE FROM auth_sessions WHERE user_id = $1",
-      [userId]
-    );
+    await this.pool.query("DELETE FROM auth_sessions WHERE user_id = $1", [
+      userId
+    ]);
   }
   async transaction(callback) {
     const client = await this.pool.connect();
@@ -226,6 +271,7 @@ var PostgresAdapter = class {
     }
   }
   async deleteUser(id) {
+    console.log(`Soft deleting user with ID: ${id}`);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -234,12 +280,50 @@ var PostgresAdapter = class {
         [id]
       );
       await client.query(
-        "DELETE FROM auth_sessions WHERE user_id = $1",
+        "UPDATE auth_sessions SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = $1",
         [id]
       );
       await client.query(
-        "DELETE FROM users WHERE id = $1",
+        "UPDATE users SET deleted_at = CURRENT_TIMESTAMP, active = false WHERE id = $1",
         [id]
+      );
+      await client.query("COMMIT");
+      console.log(`User ${id} soft deleted successfully`);
+    } catch (error) {
+      console.error(`Error soft deleting user ${id}:`, error);
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async createCredential(userId, type, identifier, credential) {
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!type) {
+      throw new Error("Credential type is required");
+    }
+    if (!identifier) {
+      throw new Error("Credential identifier is required");
+    }
+    if (!credential) {
+      throw new Error("Credential value is required");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const userResult = await client.query(
+        "SELECT id FROM users WHERE id = $1",
+        [userId]
+      );
+      if (userResult.rows.length === 0) {
+        throw new Error("User not found");
+      }
+      await client.query(
+        `INSERT INTO auth_credentials (user_id, type, identifier, credential)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, type, identifier, credential]
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -248,13 +332,6 @@ var PostgresAdapter = class {
     } finally {
       client.release();
     }
-  }
-  async createCredential(userId, type, identifier, credential) {
-    await this.pool.query(
-      `INSERT INTO auth_credentials (user_id, type, identifier, credential)
-       VALUES ($1, $2, $3, $4)`,
-      [userId, type, identifier, credential]
-    );
   }
   async getCredential(userId, type) {
     const result = await this.pool.query(
@@ -272,14 +349,43 @@ var PostgresAdapter = class {
     };
   }
   async updateCredential(userId, type, credential) {
-    await this.pool.query(
-      `UPDATE auth_credentials 
-       SET credential = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $2 AND type = $3`,
-      [credential, userId, type]
-    );
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!type) {
+      throw new Error("Credential type is required");
+    }
+    if (!credential) {
+      throw new Error("Credential value is required");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE auth_credentials 
+         SET credential = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = $2 AND type = $3
+         RETURNING id`,
+        [credential, userId, type]
+      );
+      if (result.rows.length === 0) {
+        throw new Error("Credential not found");
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async createSession(userId, refreshToken, metadata) {
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!refreshToken) {
+      throw new Error("Refresh token is required");
+    }
     const result = await this.pool.query(
       `INSERT INTO auth_sessions 
        (id, user_id, refresh_token, expires_at, user_agent, ip_address)
@@ -345,6 +451,21 @@ var PostgresAdapter = class {
     }));
   }
   async createRefreshToken(sessionId, userId, token, expiresAt) {
+    if (!sessionId) {
+      throw new Error("Session ID is required");
+    }
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!token) {
+      throw new Error("Token value is required");
+    }
+    if (!expiresAt) {
+      throw new Error("Expiration date is required");
+    }
+    if (expiresAt.getTime() <= Date.now()) {
+      throw new Error("Expiration date must be in the future");
+    }
     const result = await this.pool.query(
       `INSERT INTO auth_refresh_tokens (token, user_id, session_id, expires_at)
        VALUES ($1, $2, $3, $4)
@@ -376,10 +497,34 @@ var PostgresAdapter = class {
     };
   }
   async revokeRefreshToken(token) {
-    await this.pool.query(
-      "UPDATE auth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token = $1",
-      [token]
-    );
+    if (!token) {
+      throw new Error("Token is required");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const tokenResult = await client.query(
+        "SELECT session_id FROM auth_refresh_tokens WHERE token = $1",
+        [token]
+      );
+      if (tokenResult.rows.length === 0) {
+        throw new Error("Token not found");
+      }
+      await client.query(
+        "UPDATE auth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token = $1",
+        [token]
+      );
+      await client.query(
+        "UPDATE auth_sessions SET last_active = CURRENT_TIMESTAMP WHERE id = $1",
+        [tokenResult.rows[0].session_id]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async revokeUserRefreshTokens(userId) {
     await this.pool.query(
@@ -388,28 +533,94 @@ var PostgresAdapter = class {
     );
   }
   async deleteSession(id) {
-    await this.pool.query(
-      "DELETE FROM auth_sessions WHERE id = $1",
-      [id]
-    );
+    await this.pool.query("DELETE FROM auth_sessions WHERE id = $1", [id]);
   }
   async createVerificationToken(identifier, token, type, expiresAt, metadata) {
-    await this.pool.query(
-      `INSERT INTO auth_verification_tokens (identifier, token, type, expires_at, metadata)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [identifier, token, type, expiresAt, metadata ? JSON.stringify(metadata) : null]
-    );
+    if (!identifier) {
+      throw new Error("Identifier is required");
+    }
+    if (!token) {
+      throw new Error("Token value is required");
+    }
+    if (!type) {
+      throw new Error("Token type is required");
+    }
+    if (!["email", "password_reset"].includes(type)) {
+      throw new Error(
+        "Invalid token type. Must be 'email' or 'password_reset'"
+      );
+    }
+    if (!expiresAt) {
+      throw new Error("Expiration date is required");
+    }
+    if (expiresAt.getTime() <= Date.now()) {
+      throw new Error("Expiration date must be in the future");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM auth_verification_tokens 
+         WHERE identifier = $1`,
+        [identifier]
+      );
+      await client.query(
+        `INSERT INTO auth_verification_tokens (identifier, token, type, expires_at, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          identifier,
+          token,
+          type,
+          expiresAt,
+          metadata ? JSON.stringify(metadata) : null
+        ]
+      );
+      await client.query(
+        `DELETE FROM auth_verification_tokens 
+         WHERE expires_at < CURRENT_TIMESTAMP 
+         AND created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'`
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async useVerificationToken(identifier, token) {
-    const result = await this.pool.query(
-      `DELETE FROM auth_verification_tokens
-       WHERE identifier = $1 
-       AND token = $2
-       AND expires_at > CURRENT_TIMESTAMP
-       RETURNING *`,
-      [identifier, token]
-    );
-    return result.rows.length > 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `DELETE FROM auth_verification_tokens
+         WHERE identifier = $1 
+         AND token = $2
+         AND expires_at > CURRENT_TIMESTAMP
+         RETURNING type, identifier`,
+        [identifier, token]
+      );
+      if (result.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const { type, identifier: email } = result.rows[0];
+      if (type === "email") {
+        await client.query(
+          `UPDATE users 
+           SET email_verified_at = CURRENT_TIMESTAMP 
+           WHERE email = $1`,
+          [email]
+        );
+      }
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   /**
    * Close database connection
@@ -423,17 +634,15 @@ var PostgresAdapter = class {
 var DefaultCryptoAdapter = class {
   randomBytes(size) {
     const bytes = new Uint8Array(size);
-    const timestamp = Date.now().toString();
-    const encoded = base64url.encode(new TextEncoder().encode(timestamp));
-    for (let i = 0; i < size; i++) {
-      bytes[i] = encoded.charCodeAt(i % encoded.length);
-    }
+    crypto.getRandomValues(bytes);
     return bytes;
   }
   async hash(data, salt) {
-    const secret = await generateSecret("HS256");
-    const token = await new SignJWT({ data: salt + data }).setProtectedHeader({ alg: "HS256" }).sign(secret);
-    return token;
+    const saltRounds = 10;
+    return await bcrypt.hash(data, saltRounds);
+  }
+  async verifyHash(data, hash2) {
+    return await bcrypt.compare(data, hash2);
   }
   async generatePKCEChallenge() {
     const verifierBytes = this.randomBytes(32);
@@ -472,16 +681,19 @@ var Auth = class {
         return { success: false, error: "User already exists" };
       }
       const user = await this.db.createUser(email, metadata?.userData);
-      const salt = Array.from(this.crypto.randomBytes(16)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      const hashedPassword = await this.crypto.hash(password, salt);
+      const hashedPassword = await this.crypto.hash(password, "");
       await this.db.createCredential(
         user.id,
         "password",
         email,
-        `${salt}:${hashedPassword}`
+        hashedPassword
       );
       const tokens = await this.generateTokenPair(user);
-      const session = await this.createSession(user.id, tokens.refreshToken, metadata);
+      const session = await this.createSession(
+        user.id,
+        tokens.refreshToken,
+        metadata
+      );
       return {
         success: true,
         accessToken: tokens.accessToken,
@@ -502,19 +714,25 @@ var Auth = class {
     try {
       const user = await this.db.getUserByEmail(email);
       if (!user) {
-        return { success: false, error: "Invalid credentials" };
+        return { success: false, error: "Authentication failed" };
       }
       const credential = await this.db.getCredential(user.id, "password");
       if (!credential) {
-        return { success: false, error: "Invalid credentials" };
+        return { success: false, error: "Authentication failed" };
       }
-      const [salt, hash] = credential.credential.split(":");
-      const testHash = await this.crypto.hash(password, salt);
-      if (hash !== testHash) {
-        return { success: false, error: "Invalid credentials" };
+      const isValid = await this.crypto.verifyHash(
+        password,
+        credential.credential
+      );
+      if (!isValid) {
+        return { success: false, error: "Authentication failed" };
       }
       const tokens = await this.generateTokenPair(user);
-      const session = await this.createSession(user.id, tokens.refreshToken, metadata);
+      const session = await this.createSession(
+        user.id,
+        tokens.refreshToken,
+        metadata
+      );
       return {
         success: true,
         accessToken: tokens.accessToken,
@@ -537,7 +755,8 @@ var Auth = class {
       if (!payload.sub || payload.type !== "access") return null;
       const user = await this.db.getUserById(payload.sub);
       return user;
-    } catch {
+    } catch (error) {
+      console.error("Token verification failed:", error);
       return null;
     }
   }
@@ -585,9 +804,17 @@ var Auth = class {
    * Generate a verification token for email/phone verification
    */
   async generateVerificationToken(identifier, type = "email", metadata) {
-    const token = Array.from(this.crypto.randomBytes(3)).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 6);
+    const randomBytes = this.crypto.randomBytes(4);
+    const number = ((randomBytes[0] | randomBytes[1] << 8 | randomBytes[2] << 16 | (randomBytes[3] & 127) << 24) >>> 0) % 9e5 + 1e5;
+    const token = number.toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-    await this.db.createVerificationToken(identifier, token, type, expiresAt, metadata);
+    await this.db.createVerificationToken(
+      identifier,
+      token,
+      type,
+      expiresAt,
+      metadata
+    );
     return token;
   }
   /**

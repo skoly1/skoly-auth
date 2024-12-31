@@ -117,6 +117,8 @@ interface CryptoAdapter {
     randomBytes(size: number): Uint8Array;
     /** Hash data with a salt */
     hash(data: string, salt: string): Promise<string>;
+    /** Verify hashed data */
+    verifyHash(data: string, hash: string): Promise<boolean>;
     /** Generate PKCE challenge/verifier pair */
     generatePKCEChallenge(): Promise<PKCEChallenge>;
     /** Verify PKCE challenge */

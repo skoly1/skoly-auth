@@ -1,5 +1,8 @@
 {
-  "name": "skoly-auth-monorepo",
+  "name": "skoly-auth",
+  "version": "1.0.0",
+  "description": "A modern, type-safe authentication library for Node.js applications with built-in CLI tools.",
+  "main": "index.js",
   "private": true,
   "packageManager": "pnpm@9.15.2",
   "scripts": {
@@ -11,6 +14,21 @@
     "version-packages": "changeset version",
     "preinstall": "npx only-allow pnpm"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skoly/skoly-auth.git"
+  },
+  "keywords": [
+    "authentication",
+    "npm",
+    "open-source"
+  ],
+  "author": "Skoly <saiteja.g1801@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/skoly/skoly-auth/issues"
+  },
+  "homepage": "https://github.com/skoly/skoly-auth#readme",
   "devDependencies": {
     "@types/node": "^20.17.10",
     "@changesets/cli": "^2.27.1",
