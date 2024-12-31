@@ -13,7 +13,7 @@ const db = new PostgresAdapter({
   host: "localhost",
   database: "openauth",
   user: "postgres",
-  password: "",
+  password: "postgres_password",
 });
 
 // Initialize auth
