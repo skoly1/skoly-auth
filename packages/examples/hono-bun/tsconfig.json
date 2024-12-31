@@ -14,8 +14,8 @@
     "skipLibCheck": true,
     "allowJs": true,
     "paths": {
-      "@skoly/openauth": ["../../core/src"],
-      "@skoly/openauth/*": ["../../core/src/*"]
+      "@skoly/auth-core": ["../../core/src"],
+      "@skoly/auth-core/*": ["../../core/src/*"]
     }
   },
   "include": [".", "../../core/src/**/*"]

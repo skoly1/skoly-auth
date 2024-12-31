@@ -1,5 +1,5 @@
 {
-  "name": "@skoly/openauth-examples",
+  "name": "@skoly/auth-core-example",
   "private": true,
   "type": "module",
   "scripts": {

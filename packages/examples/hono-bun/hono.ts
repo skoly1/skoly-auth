@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { prettyJSON } from "hono/pretty-json";
 import { logger } from "hono/logger";
-import { Auth } from "@skoly/openauth";
-import { PostgresAdapter } from "@skoly/openauth/adapters/postgres";
+import { Auth } from "@skoly/auth-core";
+import { PostgresAdapter } from "@skoly/auth-core/adapters/postgres";
 
 // JWT secret
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
