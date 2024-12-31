@@ -2,9 +2,13 @@ import { writeFile } from 'fs/promises';
 
 interface AuthConfig {
   secret: string;
-  database?: {
-    type: string;
-    url?: string;
+  database: "postgres" | "mysql";
+  dbConfig: {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string;
   };
 }
 
@@ -14,11 +18,14 @@ import { Config } from '@skoly/auth-core';
 
 export default {
   secret: '${config.secret}',
-  ${config.database ? `
   database: {
-    type: '${config.database.type}',
-    ${config.database.url ? `url: '${config.database.url}'` : ''}
-  },` : ''}
+    type: '${config.database}',
+    host: '${config.dbConfig.host}',
+    port: ${config.dbConfig.port},
+    user: '${config.dbConfig.user}',
+    password: '${config.dbConfig.password}',
+    database: '${config.dbConfig.database}'
+  }
 } satisfies Config;
 `;
 

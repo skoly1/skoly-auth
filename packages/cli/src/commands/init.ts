@@ -6,9 +6,16 @@ import { updateDependencies } from "../utils/deps";
 import { Auth, PostgresAdapter } from "@skoly/auth-core";
 
 interface InitOptions {
-  secret?: string;
+  secret: string;
   yes?: boolean;
-  database?: "postgres" | "mysql";
+  database: "postgres" | "mysql";
+  dbConfig: {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string;
+  };
 }
 
 export async function init(options: InitOptions) {
@@ -19,18 +26,31 @@ export async function init(options: InitOptions) {
     const project = await detectProject();
 
     // Get configuration options
-    const config = options.yes
-      ? {
-          secret: options.secret || crypto.randomUUID(),
-          database: options.database || "postgres",
-        }
-      : await getInitOptions(options);
+    const config = await getInitOptions(options);
+
+    // Ensure required properties are set
+    if (!config.secret) {
+      config.secret = crypto.randomUUID();
+    }
+    if (!config.dbConfig) {
+      config.dbConfig = {
+        host: 'localhost',
+        port: 5432,
+        user: 'postgres',
+        password: '',
+        database: 'skoly_auth'
+      };
+    }
 
     // Initialize auth with Postgres adapter
     const auth = new Auth(new PostgresAdapter({
-      connectionString: process.env.DATABASE_URL || ''
+      host: config.dbConfig.host,
+      port: config.dbConfig.port,
+      user: config.dbConfig.user,
+      password: config.dbConfig.password,
+      database: config.dbConfig.database
     }), {
-      secret: config.secret,
+      secret: config.secret as string,
       accessTokenExpiry: 15 * 60 * 1000, // 15 minutes in milliseconds
       refreshTokenExpiry: 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
     });
