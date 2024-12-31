@@ -15,8 +15,28 @@ export class PostgresAdapter implements DatabaseAdapter {
   private pool: Pool;
 
   constructor(config: PoolConfig) {
+    if (!config) {
+      throw new Error("Database configuration is required");
+    }
+    if (!config.database) {
+      throw new Error("Database name is required in configuration");
+    }
+
+    // Configure connection pool with optimal defaults
+    const poolConfig = {
+      ...config,
+      max: config.max || 20, // Maximum pool size
+      idleTimeoutMillis: config.idleTimeoutMillis || 30000, // Close idle connections after 30s
+      connectionTimeoutMillis: config.connectionTimeoutMillis || 2000, // Connection timeout
+    };
+
     // We use dynamic import to avoid bundling pg when not used
-    this.pool = new (require("pg").Pool)(config);
+    this.pool = new (require("pg").Pool)(poolConfig);
+
+    // Setup pool error handler
+    this.pool.on("error", (err) => {
+      console.error("Unexpected error on idle client", err);
+    });
   }
 
   /**
@@ -33,8 +53,12 @@ export class PostgresAdapter implements DatabaseAdapter {
         email_verified_at TIMESTAMP WITH TIME ZONE,
         active BOOLEAN DEFAULT true,
         metadata JSONB,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP WITH TIME ZONE
       );
+
+      -- Index for soft deletes
+      CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NULL;
 
       CREATE TABLE IF NOT EXISTS auth_credentials (
         user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -48,14 +72,19 @@ export class PostgresAdapter implements DatabaseAdapter {
 
       CREATE TABLE IF NOT EXISTS auth_sessions (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-        refresh_token TEXT,
-        last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+        refresh_token TEXT NOT NULL,
+        last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
         user_agent TEXT,
-        ip_address TEXT
+        ip_address TEXT,
+        deleted_at TIMESTAMP WITH TIME ZONE
       );
+
+      -- Index for faster session lookups by user
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id 
+      ON auth_sessions(user_id);
 
       CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
         token TEXT PRIMARY KEY,
@@ -65,6 +94,10 @@ export class PostgresAdapter implements DatabaseAdapter {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         revoked_at TIMESTAMP WITH TIME ZONE
       );
+
+      -- Index for faster token lookups by user
+      CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_user_id 
+      ON auth_refresh_tokens(user_id);
 
       CREATE TABLE IF NOT EXISTS auth_verification_tokens (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -86,6 +119,9 @@ export class PostgresAdapter implements DatabaseAdapter {
     email: string,
     metadata?: Record<string, any>
   ): Promise<User> {
+    if (!email) {
+      throw new Error("Email is required");
+    }
     const result = await this.pool.query(
       "INSERT INTO users (email, metadata) VALUES ($1, $2) RETURNING *",
       [email.toLowerCase(), metadata ? JSON.stringify(metadata) : null]
@@ -124,9 +160,21 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async getUserById(id: string): Promise<User | null> {
-    const result = await this.pool.query("SELECT * FROM users WHERE id = $1", [
-      id,
-    ]);
+    if (!id) {
+      throw new Error("User ID is required");
+    }
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        id
+      )
+    ) {
+      throw new Error("Invalid UUID format for user ID");
+    }
+    console.log(`Getting user by ID: ${id}`);
+    const result = await this.pool.query(
+      "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL",
+      [id]
+    );
 
     if (result.rows.length === 0) return null;
 
@@ -141,8 +189,9 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async getUserByEmail(email: string): Promise<User | null> {
+    console.log(`Getting user by email: ${email}`);
     const result = await this.pool.query(
-      "SELECT * FROM users WHERE email = $1",
+      "SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL",
       [email.toLowerCase()]
     );
 
@@ -266,6 +315,7 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async deleteUser(id: string): Promise<void> {
+    console.log(`Soft deleting user with ID: ${id}`);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -276,14 +326,22 @@ export class PostgresAdapter implements DatabaseAdapter {
         [id]
       );
 
-      // Delete sessions
-      await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [id]);
+      // Soft delete sessions
+      await client.query(
+        "UPDATE auth_sessions SET deleted_at = CURRENT_TIMESTAMP WHERE user_id = $1",
+        [id]
+      );
 
-      // Delete user
-      await client.query("DELETE FROM users WHERE id = $1", [id]);
+      // Soft delete user
+      await client.query(
+        "UPDATE users SET deleted_at = CURRENT_TIMESTAMP, active = false WHERE id = $1",
+        [id]
+      );
 
       await client.query("COMMIT");
+      console.log(`User ${id} soft deleted successfully`);
     } catch (error) {
+      console.error(`Error soft deleting user ${id}:`, error);
       await client.query("ROLLBACK");
       throw error;
     } finally {
@@ -297,11 +355,46 @@ export class PostgresAdapter implements DatabaseAdapter {
     identifier: string,
     credential: string
   ): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO auth_credentials (user_id, type, identifier, credential)
-       VALUES ($1, $2, $3, $4)`,
-      [userId, type, identifier, credential]
-    );
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!type) {
+      throw new Error("Credential type is required");
+    }
+    if (!identifier) {
+      throw new Error("Credential identifier is required");
+    }
+    if (!credential) {
+      throw new Error("Credential value is required");
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Verify user exists
+      const userResult = await client.query(
+        "SELECT id FROM users WHERE id = $1",
+        [userId]
+      );
+      if (userResult.rows.length === 0) {
+        throw new Error("User not found");
+      }
+
+      // Create credential
+      await client.query(
+        `INSERT INTO auth_credentials (user_id, type, identifier, credential)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, type, identifier, credential]
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getCredential(
@@ -330,12 +423,40 @@ export class PostgresAdapter implements DatabaseAdapter {
     type: string,
     credential: string
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE auth_credentials 
-       SET credential = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = $2 AND type = $3`,
-      [credential, userId, type]
-    );
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!type) {
+      throw new Error("Credential type is required");
+    }
+    if (!credential) {
+      throw new Error("Credential value is required");
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Update credential and verify it exists
+      const result = await client.query(
+        `UPDATE auth_credentials 
+         SET credential = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = $2 AND type = $3
+         RETURNING id`,
+        [credential, userId, type]
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error("Credential not found");
+      }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createSession(
@@ -343,6 +464,12 @@ export class PostgresAdapter implements DatabaseAdapter {
     refreshToken: string,
     metadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<Session> {
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!refreshToken) {
+      throw new Error("Refresh token is required");
+    }
     const result = await this.pool.query(
       `INSERT INTO auth_sessions 
        (id, user_id, refresh_token, expires_at, user_agent, ip_address)
@@ -420,6 +547,21 @@ export class PostgresAdapter implements DatabaseAdapter {
     token: string,
     expiresAt: Date
   ): Promise<RefreshToken> {
+    if (!sessionId) {
+      throw new Error("Session ID is required");
+    }
+    if (!userId) {
+      throw new Error("User ID is required");
+    }
+    if (!token) {
+      throw new Error("Token value is required");
+    }
+    if (!expiresAt) {
+      throw new Error("Expiration date is required");
+    }
+    if (expiresAt.getTime() <= Date.now()) {
+      throw new Error("Expiration date must be in the future");
+    }
     const result = await this.pool.query(
       `INSERT INTO auth_refresh_tokens (token, user_id, session_id, expires_at)
        VALUES ($1, $2, $3, $4)
@@ -456,10 +598,43 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async revokeRefreshToken(token: string): Promise<void> {
-    await this.pool.query(
-      "UPDATE auth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token = $1",
-      [token]
-    );
+    if (!token) {
+      throw new Error("Token is required");
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Get token info
+      const tokenResult = await client.query(
+        "SELECT session_id FROM auth_refresh_tokens WHERE token = $1",
+        [token]
+      );
+
+      if (tokenResult.rows.length === 0) {
+        throw new Error("Token not found");
+      }
+
+      // Revoke token
+      await client.query(
+        "UPDATE auth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE token = $1",
+        [token]
+      );
+
+      // Update session last_active
+      await client.query(
+        "UPDATE auth_sessions SET last_active = CURRENT_TIMESTAMP WHERE id = $1",
+        [tokenResult.rows[0].session_id]
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async revokeUserRefreshTokens(userId: string): Promise<void> {
@@ -480,10 +655,30 @@ export class PostgresAdapter implements DatabaseAdapter {
     expiresAt: Date,
     metadata?: Record<string, any>
   ): Promise<void> {
+    if (!identifier) {
+      throw new Error("Identifier is required");
+    }
+    if (!token) {
+      throw new Error("Token value is required");
+    }
+    if (!type) {
+      throw new Error("Token type is required");
+    }
+    if (!["email", "password_reset"].includes(type)) {
+      throw new Error(
+        "Invalid token type. Must be 'email' or 'password_reset'"
+      );
+    }
+    if (!expiresAt) {
+      throw new Error("Expiration date is required");
+    }
+    if (expiresAt.getTime() <= Date.now()) {
+      throw new Error("Expiration date must be in the future");
+    }
     const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
-      
+      await client.query("BEGIN");
+
       // Delete any existing tokens for this identifier
       await client.query(
         `DELETE FROM auth_verification_tokens 
@@ -511,9 +706,9 @@ export class PostgresAdapter implements DatabaseAdapter {
          AND created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'`
       );
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -526,7 +721,7 @@ export class PostgresAdapter implements DatabaseAdapter {
   ): Promise<boolean> {
     const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Get and delete the verification token
       const result = await client.query(
@@ -539,14 +734,14 @@ export class PostgresAdapter implements DatabaseAdapter {
       );
 
       if (result.rows.length === 0) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return false;
       }
 
       const { type, identifier: email } = result.rows[0];
 
       // Handle different token types
-      if (type === 'email') {
+      if (type === "email") {
         // Update user's email verification status
         await client.query(
           `UPDATE users 
@@ -558,10 +753,10 @@ export class PostgresAdapter implements DatabaseAdapter {
       // Note: For password_reset type, the actual password update is handled separately
       // since we don't want to store the new password in the verification token
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       return true;
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();

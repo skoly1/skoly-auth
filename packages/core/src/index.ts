@@ -7,6 +7,7 @@ import {
   generateSecret,
   base64url,
 } from "jose";
+import * as bcrypt from "bcrypt";
 import type {
   AuthConfig,
   AuthResult,
@@ -23,7 +24,7 @@ import type {
 export * from "./types";
 export * from "./adapters/postgres";
 
-// Platform-agnostic crypto implementation using jose
+// Platform-agnostic crypto implementation using jose and bcrypt
 class DefaultCryptoAdapter implements CryptoAdapter {
   randomBytes(size: number): Uint8Array {
     // Use crypto.getRandomValues for true randomness
@@ -33,12 +34,14 @@ class DefaultCryptoAdapter implements CryptoAdapter {
   }
 
   async hash(data: string, salt: string): Promise<string> {
-    // Use the salt as a consistent secret key for hashing
-    const secret = new TextEncoder().encode(salt);
-    const token = await new SignJWT({ data })
-      .setProtectedHeader({ alg: "HS256" })
-      .sign(secret);
-    return token;
+    // Use bcrypt for secure password hashing
+    const saltRounds = 10;
+    return await bcrypt.hash(data, saltRounds);
+  }
+
+  async verifyHash(data: string, hash: string): Promise<boolean> {
+    // Use bcrypt to verify hashed passwords
+    return await bcrypt.compare(data, hash);
   }
 
   async generatePKCEChallenge(): Promise<PKCEChallenge> {
@@ -112,15 +115,12 @@ export class Auth {
       const user = await this.db.createUser(email, metadata?.userData);
 
       // Hash password and create credential
-      const salt = Array.from(this.crypto.randomBytes(16))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-      const hashedPassword = await this.crypto.hash(password, salt);
+      const hashedPassword = await this.crypto.hash(password, "");
       await this.db.createCredential(
         user.id,
         "password",
         email,
-        `${salt}:${hashedPassword}`
+        hashedPassword
       );
 
       // Generate tokens and create session
@@ -157,22 +157,22 @@ export class Auth {
       // Get user
       const user = await this.db.getUserByEmail(email);
       if (!user) {
-        return { success: false, error: "Invalid credentials" };
+        return { success: false, error: "Authentication failed" };
       }
 
       // Get password credential
       const credential = await this.db.getCredential(user.id, "password");
-      console.log(credential);
       if (!credential) {
-        return { success: false, error: "Invalid credentials" };
+        return { success: false, error: "Authentication failed" };
       }
 
-      // Verify password
-      const [salt, hash] = credential.credential.split(":");
-      const testHash = await this.crypto.hash(password, salt);
-
-      if (hash !== testHash) {
-        return { success: false, error: "Invalid credentials" };
+      // Verify password using bcrypt
+      const isValid = await this.crypto.verifyHash(
+        password,
+        credential.credential
+      );
+      if (!isValid) {
+        return { success: false, error: "Authentication failed" };
       }
 
       // Generate tokens and create session
@@ -208,22 +208,7 @@ export class Auth {
       const user = await this.db.getUserById(payload.sub);
       return user;
     } catch (error) {
-      console.error('Token verification failed:', error);
-      // Check if token is malformed
-      try {
-        const parts = token.split('.');
-        if (parts.length !== 3) {
-          console.error('Invalid token format - expected 3 parts');
-          return null;
-        }
-        // Log header and payload for debugging
-        const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-        console.error('Token header:', header);
-        console.error('Token payload:', payload);
-      } catch (e) {
-        console.error('Error parsing token:', e);
-      }
+      console.error("Token verification failed:", error);
       return null;
     }
   }
@@ -292,10 +277,13 @@ export class Auth {
     // Generate random 6 digit number (100000-999999)
     const randomBytes = this.crypto.randomBytes(4);
     const number =
-      ((randomBytes[0] |
+      (((randomBytes[0] |
         (randomBytes[1] << 8) |
         (randomBytes[2] << 16) |
-        ((randomBytes[3] & 0x7F) << 24)) >>> 0) % 900000 + 100000;
+        ((randomBytes[3] & 0x7f) << 24)) >>>
+        0) %
+        900000) +
+      100000;
     const token = number.toString();
 
     // Store verification token
