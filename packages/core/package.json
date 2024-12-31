@@ -22,7 +22,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build",
-    "publish": "node -e \"const {execSync} = require('child_process'); const pkg = require('./package.json'); try { execSync(`npm view ${pkg.name}@${pkg.version} version`, {stdio: 'ignore'}); console.log('${pkg.name}@${pkg.version} already published'); } catch { execSync('npm publish --access public', {stdio: 'inherit'}); }\""
+    "publish": "npm publish --access public"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
