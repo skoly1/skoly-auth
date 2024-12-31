@@ -89,7 +89,8 @@ async function getComponents() {
 
 // src/utils/prompts.ts
 async function getInitOptions(options) {
-  return await prompts([
+  if (!options) options = {};
+  const responses = await prompts([
     {
       type: "text",
       name: "secret",
@@ -107,6 +108,55 @@ async function getInitOptions(options) {
       initial: options.database === "mysql" ? 1 : 0
     }
   ]);
+  if (responses.database === "postgres") {
+    const dbDetails = await prompts([
+      {
+        type: "text",
+        name: "host",
+        message: "Enter database host",
+        initial: "localhost"
+      },
+      {
+        type: "number",
+        name: "port",
+        message: "Enter database port",
+        initial: 5432
+      },
+      {
+        type: "text",
+        name: "user",
+        message: "Enter database user",
+        initial: "postgres"
+      },
+      {
+        type: "password",
+        name: "password",
+        message: "Enter database password"
+      },
+      {
+        type: "text",
+        name: "database",
+        message: "Enter database name",
+        validate: (value) => value ? true : "Database name is required"
+      }
+    ]);
+    return {
+      secret: responses.secret || crypto.randomUUID(),
+      database: responses.database,
+      dbConfig: dbDetails
+    };
+  }
+  return {
+    secret: responses.secret || crypto.randomUUID(),
+    database: responses.database || "postgres",
+    dbConfig: {
+      host: "localhost",
+      port: 5432,
+      user: "postgres",
+      password: "",
+      database: "skoly_auth"
+    }
+  };
 }
 async function getComponent() {
   const components2 = await getComponents();
@@ -131,11 +181,14 @@ import { Config } from '@skoly/auth-core';
 
 export default {
   secret: '${config.secret}',
-  ${config.database ? `
   database: {
-    type: '${config.database.type}',
-    ${config.database.url ? `url: '${config.database.url}'` : ""}
-  },` : ""}
+    type: '${config.database}',
+    host: '${config.dbConfig.host}',
+    port: ${config.dbConfig.port},
+    user: '${config.dbConfig.user}',
+    password: '${config.dbConfig.password}',
+    database: '${config.dbConfig.database}'
+  }
 } satisfies Config;
 `;
   await writeFile("auth.config.ts", content);
@@ -170,12 +223,25 @@ async function init(options) {
   console.log(chalk.blue("Initializing Skoly Auth..."));
   try {
     const project = await detectProject();
-    const config = options.yes ? {
-      secret: options.secret || crypto.randomUUID(),
-      database: options.database || "postgres"
-    } : await getInitOptions(options);
+    const config = await getInitOptions(options);
+    if (!config.secret) {
+      config.secret = crypto.randomUUID();
+    }
+    if (!config.dbConfig) {
+      config.dbConfig = {
+        host: "localhost",
+        port: 5432,
+        user: "postgres",
+        password: "",
+        database: "skoly_auth"
+      };
+    }
     const auth = new Auth(new PostgresAdapter({
-      connectionString: process.env.DATABASE_URL || ""
+      host: config.dbConfig.host,
+      port: config.dbConfig.port,
+      user: config.dbConfig.user,
+      password: config.dbConfig.password,
+      database: config.dbConfig.database
     }), {
       secret: config.secret,
       accessTokenExpiry: 15 * 60 * 1e3,
