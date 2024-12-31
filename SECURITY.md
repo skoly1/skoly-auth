@@ -9,7 +9,7 @@ We provide security updates for the latest stable version of Skoly Auth.
 If you discover a security vulnerability, please report it responsibly:
 
 1. Do not create a public issue
-2. Email security@skoly.dev with details of the vulnerability
+2. Email saiteja.g1801@gmail.com with details of the vulnerability
 3. Include steps to reproduce and any relevant code snippets
 4. We will acknowledge receipt within 48 hours
 5. We will investigate and provide updates on our progress
