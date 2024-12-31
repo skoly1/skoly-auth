@@ -18,7 +18,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "prepublishOnly": "npm run build",
-    "publish": "npm publish --access public"
+    "publish": "node -e \"const {execSync} = require('child_process'); const pkg = require('./package.json'); try { execSync(`npm view ${pkg.name}@${pkg.version} version`, {stdio: 'ignore'}); console.log('${pkg.name}@${pkg.version} already published'); } catch { execSync('npm publish --access public', {stdio: 'inherit'}); }\""
   },
   "dependencies": {
     "@skoly/auth-core": "workspace:*",
