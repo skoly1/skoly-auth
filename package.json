@@ -6,7 +6,7 @@
   "private": true,
   "packageManager": "pnpm@9.15.2",
   "scripts": {
-    "publish": "turbo run publish",
+    "publish": "turbo run publish --filter=@skoly/auth-cli --filter=@skoly/auth-core",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "test": "turbo run test",

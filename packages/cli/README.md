@@ -1,6 +1,6 @@
 # create-skoly-auth
 
-A CLI tool to quickly set up authentication in your Node.js applications using Skoly Auth.
+A CLI tool to quickly set up authentication in your Node.js applications using @skoly/auth-core.
 
 ## Installation
 

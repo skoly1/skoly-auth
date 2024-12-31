@@ -1,4 +1,4 @@
-# @skoly/openauth
+# @skoly/auth-core
 
 A flexible, platform-agnostic authentication library that works across Node.js, Bun, and Deno.
 
@@ -18,19 +18,19 @@ A flexible, platform-agnostic authentication library that works across Node.js, 
 ## Installation
 
 ```bash
-npm install @skoly/openauth pg
+npm install @skoly/auth-core pg
 # or
-yarn add @skoly/openauth pg
+yarn add @skoly/auth-core pg
 # or
-pnpm add @skoly/openauth pg
+pnpm add @skoly/auth-core pg
 # or
-bun add @skoly/openauth pg
+bun add @skoly/auth-core pg
 ```
 
 ## Quick Start
 
 ```typescript
-import { Auth, PostgresAdapter } from '@skoly/openauth';
+import { Auth, PostgresAdapter } from '@skoly/auth-core';
 
 // Initialize database adapter
 const db = new PostgresAdapter({
@@ -58,7 +58,7 @@ const { accessToken, refreshToken } = await auth.login('user@example.com', 'pass
 
 ```typescript
 import { Hono } from 'hono';
-import { Auth, PostgresAdapter } from '@skoly/openauth';
+import { Auth, PostgresAdapter } from '@skoly/auth-core';
 
 const app = new Hono();
 const auth = new Auth(new PostgresAdapter({ /* config */ }), { /* options */ });
@@ -87,7 +87,7 @@ app.get('/protected', async (c) => {
 
 ```typescript
 import express from 'express';
-import { Auth, PostgresAdapter } from '@skoly/openauth';
+import { Auth, PostgresAdapter } from '@skoly/auth-core';
 
 const app = express();
 const auth = new Auth(new PostgresAdapter({ /* config */ }), { /* options */ });
@@ -232,7 +232,7 @@ pnpm test:coverage
 ### Writing Tests
 
 ```typescript
-import { Auth, PostgresAdapter } from '@skoly/openauth';
+import { Auth, PostgresAdapter } from '@skoly/auth-core';
 import { describe, it, expect } from 'vitest';
 
 describe('Auth', () => {

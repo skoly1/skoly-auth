@@ -1,6 +1,6 @@
 {
   "name": "@skoly/auth-core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -17,7 +17,8 @@
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "publish": "npm publish --access public"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
