@@ -3,7 +3,7 @@ import { detectProject } from "../utils/detect";
 import { getInitOptions } from "../utils/prompts";
 import { writeConfig } from "../utils/config";
 import { updateDependencies } from "../utils/deps";
-import { Auth } from "@skoly/openauth";
+import { Auth, PostgresAdapter } from "@skoly/auth-core";
 
 interface InitOptions {
   secret?: string;
@@ -26,12 +26,14 @@ export async function init(options: InitOptions) {
         }
       : await getInitOptions(options);
 
-    // Initialize auth
-    const auth = new Auth({
+    // Initialize auth with Postgres adapter
+    const auth = new Auth(new PostgresAdapter({
+      connectionString: process.env.DATABASE_URL || ''
+    }), {
       secret: config.secret,
+      accessTokenExpiry: 15 * 60 * 1000, // 15 minutes in milliseconds
+      refreshTokenExpiry: 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
     });
-
-    await auth.init();
 
     // Generate config file
     await writeConfig(config);

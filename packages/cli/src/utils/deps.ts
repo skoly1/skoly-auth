@@ -14,7 +14,7 @@ export async function updateDependencies(info: ProjectInfo) {
   // Add core dependency
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    '@skoly/openauth': 'latest'
+    '@skoly/auth-core': 'latest'
   };
 
   // Add component-specific deps

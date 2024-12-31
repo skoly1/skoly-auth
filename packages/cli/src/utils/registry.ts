@@ -11,7 +11,7 @@ export const components: Record<string, Component> = {
     description: "Email and password based authentication",
     files: ["components/PasswordLogin.tsx", "lib/auth/password.ts"],
     dependencies: {
-      "@skoly/openauth": "latest",
+      "@skoly/auth-core": "latest",
     },
   },
   "oauth-buttons": {
@@ -19,7 +19,7 @@ export const components: Record<string, Component> = {
     description: "Social login buttons",
     files: ["components/OAuthButtons.tsx", "lib/auth/oauth.ts"],
     dependencies: {
-      "@skoly/openauth": "latest",
+      "@skoly/auth-core": "latest",
     },
   },
 };

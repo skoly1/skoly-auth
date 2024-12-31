@@ -10,7 +10,7 @@ interface AuthConfig {
 
 export async function writeConfig(config: AuthConfig) {
   const content = `
-import { Config } from '@skoly/openauth';
+import { Config } from '@skoly/auth-core';
 
 export default {
   secret: '${config.secret}',

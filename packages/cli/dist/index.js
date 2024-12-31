@@ -71,7 +71,7 @@ var components = {
     description: "Email and password based authentication",
     files: ["components/PasswordLogin.tsx", "lib/auth/password.ts"],
     dependencies: {
-      "@skoly/openauth": "latest"
+      "@skoly/auth-core": "latest"
     }
   },
   "oauth-buttons": {
@@ -79,7 +79,7 @@ var components = {
     description: "Social login buttons",
     files: ["components/OAuthButtons.tsx", "lib/auth/oauth.ts"],
     dependencies: {
-      "@skoly/openauth": "latest"
+      "@skoly/auth-core": "latest"
     }
   }
 };
@@ -127,7 +127,7 @@ async function getComponent() {
 import { writeFile } from "fs/promises";
 async function writeConfig(config) {
   const content = `
-import { Config } from '@skoly/openauth';
+import { Config } from '@skoly/auth-core';
 
 export default {
   secret: '${config.secret}',
@@ -149,7 +149,7 @@ async function updateDependencies(info) {
   );
   packageJson.dependencies = {
     ...packageJson.dependencies,
-    "@skoly/openauth": "latest"
+    "@skoly/auth-core": "latest"
   };
   if (info.component && components[info.component]) {
     const componentDeps = components[info.component].dependencies;
@@ -165,7 +165,7 @@ async function updateDependencies(info) {
 }
 
 // src/commands/init.ts
-import { Auth } from "@skoly/openauth";
+import { Auth, PostgresAdapter } from "@skoly/auth-core";
 async function init(options) {
   console.log(chalk.blue("Initializing Skoly Auth..."));
   try {
@@ -174,10 +174,15 @@ async function init(options) {
       secret: options.secret || crypto.randomUUID(),
       database: options.database || "postgres"
     } : await getInitOptions(options);
-    const auth = new Auth({
-      secret: config.secret
+    const auth = new Auth(new PostgresAdapter({
+      connectionString: process.env.DATABASE_URL || ""
+    }), {
+      secret: config.secret,
+      accessTokenExpiry: 15 * 60 * 1e3,
+      // 15 minutes in milliseconds
+      refreshTokenExpiry: 7 * 24 * 60 * 60 * 1e3
+      // 7 days in milliseconds
     });
-    await auth.init();
     await writeConfig(config);
     await updateDependencies(project);
     console.log(chalk.green("\u2713 Authentication initialized successfully"));
