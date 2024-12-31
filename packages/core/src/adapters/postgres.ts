@@ -524,16 +524,48 @@ export class PostgresAdapter implements DatabaseAdapter {
     identifier: string,
     token: string
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `DELETE FROM auth_verification_tokens
-       WHERE identifier = $1 
-       AND token = $2
-       AND expires_at > CURRENT_TIMESTAMP
-       RETURNING *`,
-      [identifier, token]
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    return result.rows.length > 0;
+      // Get and delete the verification token
+      const result = await client.query(
+        `DELETE FROM auth_verification_tokens
+         WHERE identifier = $1 
+         AND token = $2
+         AND expires_at > CURRENT_TIMESTAMP
+         RETURNING type, identifier`,
+        [identifier, token]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      const { type, identifier: email } = result.rows[0];
+
+      // Handle different token types
+      if (type === 'email') {
+        // Update user's email verification status
+        await client.query(
+          `UPDATE users 
+           SET email_verified_at = CURRENT_TIMESTAMP 
+           WHERE email = $1`,
+          [email]
+        );
+      }
+      // Note: For password_reset type, the actual password update is handled separately
+      // since we don't want to store the new password in the verification token
+
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**

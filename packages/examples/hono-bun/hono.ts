@@ -8,6 +8,9 @@ import { Auth } from "@skoly/openauth";
 import { PostgresAdapter } from "@skoly/openauth/adapters/postgres";
 import type { User } from "@skoly/openauth/types";
 
+// JWT secret
+const JWT_SECRET = process.env.JWT_SECRET || "4f3c2e1d5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d";
+
 // Initialize auth
 const db = new PostgresAdapter({
   host: "localhost",
@@ -17,7 +20,7 @@ const db = new PostgresAdapter({
 });
 
 const auth = new Auth(db, {
-  secret: "4f3c2e1d5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+  secret: JWT_SECRET,
 });
 
 // Initialize database
@@ -159,9 +162,22 @@ authRoutes.post("/refresh", async (c) => {
 
 // Protected endpoint example
 authRoutes.get("/me", async (c) => {
-  const user = await auth.verifyToken(
-    c.req.header("Authorization")?.split(" ")[1] || ""
-  );
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return c.json(
+      {
+        success: false,
+        error: {
+          code: "UNAUTHORIZED",
+          message: "Missing or invalid Authorization header",
+        },
+      },
+      401
+    );
+  }
+
+  const token = authHeader.split(" ")[1];
+  const user = await auth.verifyToken(token);
 
   if (!user) {
     return c.json(
@@ -169,7 +185,7 @@ authRoutes.get("/me", async (c) => {
         success: false,
         error: {
           code: "UNAUTHORIZED",
-          message: "Invalid token",
+          message: "Invalid or expired token",
         },
       },
       401
@@ -262,7 +278,7 @@ export function createApp() {
 
   // JWT middleware for protected routes
   const requireAuth = jwt({
-    secret: process.env.JWT_SECRET || "your-secret-key",
+    secret: JWT_SECRET,
   });
 
   // Health check endpoint
@@ -281,7 +297,28 @@ export function createApp() {
   protectedRoutes.use("*", requireAuth);
   protectedRoutes.get("/protected", async (c) => {
     const payload = c.get("jwtPayload");
-    return c.json({ payload });
+    const user = await auth.verifyToken(c.req.header("Authorization")?.split(" ")[1] || "");
+    
+    if (!user) {
+      return c.json(
+        {
+          success: false,
+          error: {
+            code: "UNAUTHORIZED",
+            message: "Invalid or expired token",
+          },
+        },
+        401
+      );
+    }
+
+    return c.json({ 
+      success: true,
+      data: {
+        payload,
+        user
+      }
+    });
   });
   app.route("/api", protectedRoutes);
 

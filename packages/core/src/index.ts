@@ -207,7 +207,23 @@ export class Auth {
 
       const user = await this.db.getUserById(payload.sub);
       return user;
-    } catch {
+    } catch (error) {
+      console.error('Token verification failed:', error);
+      // Check if token is malformed
+      try {
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+          console.error('Invalid token format - expected 3 parts');
+          return null;
+        }
+        // Log header and payload for debugging
+        const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+        console.error('Token header:', header);
+        console.error('Token payload:', payload);
+      } catch (e) {
+        console.error('Error parsing token:', e);
+      }
       return null;
     }
   }
