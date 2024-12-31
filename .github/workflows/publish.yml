@@ -17,6 +17,28 @@ jobs:
       - run: npm install -g pnpm
       - run: pnpm install
       - run: pnpm run build
-      - run: |
+      - name: Publish packages
+        run: |
           npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}
-          pnpm run publish
+          
+          # Function to check if version exists
+          check_version() {
+            local package=$1
+            local version=$2
+            npm view $package@$version version > /dev/null 2>&1
+            return $?
+          }
+          
+          # Publish packages with delay and version check
+          for package in @skoly/auth-core @skoly/auth-cli; do
+            version=$(jq -r .version packages/${package#@skoly/}/package.json)
+            if check_version $package $version; then
+              echo "$package@$version already exists on npm, skipping publish"
+            else
+              echo "Publishing $package@$version"
+              cd packages/${package#@skoly/}
+              npm publish --access public
+              cd ../..
+              sleep 10 # Add delay between publishes
+            fi
+          done
