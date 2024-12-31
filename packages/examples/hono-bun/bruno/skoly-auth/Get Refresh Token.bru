@@ -1,0 +1,15 @@
+meta {
+  name: Get Refresh Token
+  type: http
+  seq: 15
+}
+
+get {
+  url: http://localhost:3000/refresh-token/your-refresh-token
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}

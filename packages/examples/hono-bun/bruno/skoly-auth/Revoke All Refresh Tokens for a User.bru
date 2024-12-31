@@ -1,0 +1,19 @@
+meta {
+  name: Revoke All Refresh Tokens for a User
+  type: http
+  seq: 17
+}
+
+post {
+  url: http://localhost:3000/revoke-user-refresh-tokens
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"userId": "your-user-id"}
+}

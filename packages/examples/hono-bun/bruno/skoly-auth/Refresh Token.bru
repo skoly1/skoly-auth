@@ -1,0 +1,19 @@
+meta {
+  name: Refresh Token
+  type: http
+  seq: 4
+}
+
+post {
+  url: http://localhost:3000/refresh
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"refreshToken": "fa74b19f7c909844ce50248da629ce753fd9a9e7b29d834260cd1b66b71c3604"}
+}

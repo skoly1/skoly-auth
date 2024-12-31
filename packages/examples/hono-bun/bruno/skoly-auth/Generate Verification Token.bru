@@ -1,0 +1,19 @@
+meta {
+  name: Generate Verification Token
+  type: http
+  seq: 8
+}
+
+post {
+  url: http://localhost:3000/generate-verification-token
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"identifier": "test@example.com", "type": "email"}
+}

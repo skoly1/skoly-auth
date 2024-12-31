@@ -1,0 +1,19 @@
+meta {
+  name: Logout All Devices
+  type: http
+  seq: 6
+}
+
+post {
+  url: http://localhost:3000/logout-all
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"userId": "b76c6757-e0b4-4e73-a197-629f920863b2"}
+}

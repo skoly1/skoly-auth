@@ -1,0 +1,19 @@
+meta {
+  name: Logout
+  type: http
+  seq: 5
+}
+
+post {
+  url: http://localhost:3000/logout
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"refreshToken": "c3d11cfb479fb6697cbf3e1011bd84d8ded1dbf15cce723e5c445f209296f512"}
+}

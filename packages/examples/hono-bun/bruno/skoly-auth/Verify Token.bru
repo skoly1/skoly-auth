@@ -1,0 +1,19 @@
+meta {
+  name: Verify Token
+  type: http
+  seq: 7
+}
+
+post {
+  url: http://localhost:3000/verify-token
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"token": "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20iLCJ0eXBlIjoiYWNjZXNzIiwic3ViIjoiYjc2YzY3NTctZTBiNC00ZTczLWExOTctNjI5ZjkyMDg2M2IyIiwiaWF0IjoxNzM1NjMxODc2LCJleHAiOjE3MzU2MzI3NzZ9.8_kKYpiXWY4N-hL00E7-WxtyqAbljUXgrHV3EoGdQNk"}
+}

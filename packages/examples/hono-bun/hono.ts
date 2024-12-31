@@ -1,17 +1,14 @@
 import { Hono } from "hono";
-import { Context } from "hono";
 import { cors } from "hono/cors";
 import { prettyJSON } from "hono/pretty-json";
 import { logger } from "hono/logger";
-import { jwt } from "hono/jwt";
 import { Auth } from "@skoly/openauth";
 import { PostgresAdapter } from "@skoly/openauth/adapters/postgres";
-import type { User } from "@skoly/openauth/types";
 
 // JWT secret
-const JWT_SECRET = process.env.JWT_SECRET || "4f3c2e1d5b6a7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d";
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
-// Initialize auth
+// Initialize database adapter
 const db = new PostgresAdapter({
   host: "localhost",
   database: "openauth",
@@ -19,6 +16,7 @@ const db = new PostgresAdapter({
   password: "",
 });
 
+// Initialize auth
 const auth = new Auth(db, {
   secret: JWT_SECRET,
 });
@@ -26,340 +24,145 @@ const auth = new Auth(db, {
 // Initialize database
 db.init().catch(console.error);
 
-// Create auth routes
-const authRoutes = new Hono();
+// Create Hono app
+const app = new Hono();
+
+// Global middleware
+app.use("*", logger());
+app.use("*", cors());
+app.use("*", prettyJSON());
+
+// Health check endpoint
+app.get("/health", (c) => {
+  return c.json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 // Register endpoint
-authRoutes.post("/register", async (c: Context) => {
+app.post("/register", async (c) => {
   const { email, password } = await c.req.json();
-
-  if (!email || !password) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_INPUT",
-          message: "Email and password required",
-        },
-      },
-      400
-    );
-  }
-
-  const result = await auth.register(email, password, {
-    userAgent: c.req.header("user-agent"),
-    ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip"),
-  });
-
-  if (!result.success) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "REGISTRATION_FAILED",
-          message: result.error,
-        },
-      },
-      400
-    );
-  }
-
-  return c.json({
-    success: true,
-    data: {
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      session: result.session,
-    },
-  });
+  const result = await auth.register(email, password);
+  return c.json(result);
 });
 
 // Login endpoint
-authRoutes.post("/login", async (c) => {
+app.post("/login", async (c) => {
   const { email, password } = await c.req.json();
-
-  if (!email || !password) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_INPUT",
-          message: "Email and password required",
-        },
-      },
-      400
-    );
-  }
-
-  const result = await auth.login(email, password, {
-    userAgent: c.req.header("user-agent"),
-    ipAddress: c.req.header("x-forwarded-for") || c.req.header("x-real-ip"),
-  });
-
-  if (!result.success) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "LOGIN_FAILED",
-          message: result.error,
-        },
-      },
-      401
-    );
-  }
-
-  return c.json({
-    success: true,
-    data: {
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      session: result.session,
-    },
-  });
+  const result = await auth.login(email, password);
+  return c.json(result);
 });
 
 // Token refresh endpoint
-authRoutes.post("/refresh", async (c) => {
+app.post("/refresh", async (c) => {
   const { refreshToken } = await c.req.json();
-
-  if (!refreshToken) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_INPUT",
-          message: "Refresh token required",
-        },
-      },
-      400
-    );
-  }
-
   const result = await auth.refreshToken(refreshToken);
-
-  if (!result.success || !result.tokens) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "REFRESH_FAILED",
-          message: result.error || "Failed to refresh tokens",
-        },
-      },
-      401
-    );
-  }
-
-  return c.json({
-    success: true,
-    data: {
-      accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
-    },
-  });
+  return c.json(result);
 });
 
-// Protected endpoint example
-authRoutes.get("/me", async (c) => {
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "UNAUTHORIZED",
-          message: "Missing or invalid Authorization header",
-        },
-      },
-      401
-    );
-  }
+// Logout endpoint
+app.post("/logout", async (c) => {
+  const { refreshToken } = await c.req.json();
+  await auth.logout(refreshToken);
+  return c.json({ success: true, message: "Logged out successfully" });
+});
 
-  const token = authHeader.split(" ")[1];
+// Logout from all devices endpoint
+app.post("/logout-all", async (c) => {
+  const { userId } = await c.req.json();
+  await auth.logoutAll(userId);
+  return c.json({ success: true, message: "Logged out from all devices" });
+});
+
+// Verify token endpoint
+app.post("/verify-token", async (c) => {
+  const { token } = await c.req.json();
   const user = await auth.verifyToken(token);
-
-  if (!user) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "UNAUTHORIZED",
-          message: "Invalid or expired token",
-        },
-      },
-      401
-    );
-  }
-
-  return c.json({
-    success: true,
-    data: { user },
-  });
+  return c.json({ success: !!user, user });
 });
 
-// Email verification endpoints
-authRoutes.post("/verify/start", async (c) => {
-  const { email } = await c.req.json();
-
-  if (!email) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_INPUT",
-          message: "Email required",
-        },
-      },
-      400
-    );
-  }
-
-  const token = await auth.generateVerificationToken(email);
-
-  // In a real app, you would send this token via email
-  // await sendEmail(email, `Your verification code is: ${token}`);
-
-  return c.json({
-    success: true,
-    data: {
-      message: "Verification code sent",
-      token, // Only included for demo purposes
-    },
-  });
+// Generate verification token endpoint
+app.post("/generate-verification-token", async (c) => {
+  const { identifier, type } = await c.req.json();
+  const token = await auth.generateVerificationToken(identifier, type);
+  return c.json({ success: true, token });
 });
 
-authRoutes.post("/verify/complete", async (c) => {
-  const { email, token } = await c.req.json();
-
-  if (!email || !token) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_INPUT",
-          message: "Email and token required",
-        },
-      },
-      400
-    );
-  }
-
-  const isValid = await auth.verifyVerificationToken(email, token);
-  if (!isValid) {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INVALID_TOKEN",
-          message: "Invalid or expired token",
-        },
-      },
-      400
-    );
-  }
-
-  return c.json({
-    success: true,
-    data: {
-      message: "Email verified successfully",
-    },
-  });
+// Verify verification token endpoint
+app.post("/verify-verification-token", async (c) => {
+  const { identifier, token } = await c.req.json();
+  const isValid = await auth.verifyVerificationToken(identifier, token);
+  return c.json({ success: isValid });
 });
 
-export function createApp() {
-  // Create main app
-  const app = new Hono();
+// Get user by ID endpoint
+app.get("/user/:id", async (c) => {
+  const { id } = c.req.param();
+  const user = await db.getUserById(id);
+  return c.json({ success: !!user, user });
+});
 
-  // Global middleware
-  app.use("*", logger());
-  app.use("*", cors());
-  app.use("*", prettyJSON());
+// Get user by email endpoint
+app.get("/user/email/:email", async (c) => {
+  const { email } = c.req.param();
+  const user = await db.getUserByEmail(email);
+  return c.json({ success: !!user, user });
+});
 
-  // JWT middleware for protected routes
-  const requireAuth = jwt({
-    secret: JWT_SECRET,
-  });
+// Update user endpoint
+app.put("/user/:id", async (c) => {
+  const { id } = c.req.param();
+  const data = await c.req.json();
+  const user = await db.updateUser(id, data);
+  return c.json({ success: !!user, user });
+});
 
-  // Health check endpoint
-  app.get("/health", (c) => {
-    return c.json({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-    });
-  });
+// Delete user endpoint
+app.delete("/user/:id", async (c) => {
+  const { id } = c.req.param();
+  await db.deleteUser(id);
+  return c.json({ success: true, message: "User deleted successfully" });
+});
 
-  // Mount auth routes
-  app.route("/auth", authRoutes);
+// Get user sessions endpoint
+app.get("/user/:id/sessions", async (c) => {
+  const { id } = c.req.param();
+  const sessions = await db.getUserSessions(id);
+  return c.json({ success: true, sessions });
+});
 
-  // Protected routes
-  const protectedRoutes = new Hono();
-  protectedRoutes.use("*", requireAuth);
-  protectedRoutes.get("/protected", async (c) => {
-    const payload = c.get("jwtPayload");
-    const user = await auth.verifyToken(c.req.header("Authorization")?.split(" ")[1] || "");
-    
-    if (!user) {
-      return c.json(
-        {
-          success: false,
-          error: {
-            code: "UNAUTHORIZED",
-            message: "Invalid or expired token",
-          },
-        },
-        401
-      );
-    }
+// Get refresh token endpoint
+app.get("/refresh-token/:token", async (c) => {
+  const { token } = c.req.param();
+  const refreshToken = await db.getRefreshToken(token);
+  return c.json({ success: !!refreshToken, refreshToken });
+});
 
-    return c.json({ 
-      success: true,
-      data: {
-        payload,
-        user
-      }
-    });
-  });
-  app.route("/api", protectedRoutes);
+// Revoke refresh token endpoint
+app.post("/revoke-refresh-token", async (c) => {
+  const { token } = await c.req.json();
+  await db.revokeRefreshToken(token);
+  return c.json({ success: true, message: "Refresh token revoked" });
+});
 
-  // 404 handler
-  app.notFound((c) => {
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "NOT_FOUND",
-          message: "The requested resource was not found",
-        },
-      },
-      404
-    );
-  });
+// Revoke all refresh tokens for a user endpoint
+app.post("/revoke-user-refresh-tokens", async (c) => {
+  const { userId } = await c.req.json();
+  await db.revokeUserRefreshTokens(userId);
+  return c.json({ success: true, message: "All refresh tokens revoked" });
+});
 
-  // Error boundary
-  app.onError((err, c) => {
-    console.error("Unhandled error:", err);
+// 404 handler
+app.notFound((c) => {
+  return c.json({ success: false, error: "Not Found" }, 404);
+});
 
-    return c.json(
-      {
-        success: false,
-        error: {
-          code: "INTERNAL_SERVER_ERROR",
-          message: "An unexpected error occurred",
-          error: err.message,
-        },
-      },
-      500
-    );
-  });
+// Error boundary
+app.onError((err, c) => {
+  console.error("Unhandled error:", err);
+  return c.json({ success: false, error: "Internal Server Error" }, 500);
+});
 
-  return { app, db, auth };
-}
-
-// Create and export the Bun server configuration
-const { app } = createApp();
+// Start the server
 const port = parseInt(process.env.PORT || "3000");
-
 console.log(`Server running at http://localhost:${port}`);
 
 export default {
