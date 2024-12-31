@@ -1,6 +1,7 @@
 {
   "name": "@skoly/auth-cli",
   "version": "0.0.6",
+  "license": "MIT",
   "private": false,
   "type": "module",
   "bin": {

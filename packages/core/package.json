@@ -2,6 +2,7 @@
   "name": "@skoly/auth-core",
   "version": "0.0.6",
   "private": false,
+  "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
