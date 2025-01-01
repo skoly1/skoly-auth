@@ -1,11 +1,10 @@
 # Skoly Auth
 
-A modern, type-safe authentication library for Node.js applications with built-in CLI tools.
+A modern, type-safe authentication library for Node.js applications.
 
 ## Features
 
 - 🔒 Secure authentication with JWT tokens
-- 🛠️ Interactive CLI for easy setup and configuration
 - 📦 Modular monorepo structure using PNPM workspaces
 - 🚀 Built with TypeScript for type safety
 - 🔌 Extensible database adapters (currently supports PostgreSQL)
@@ -16,7 +15,6 @@ A modern, type-safe authentication library for Node.js applications with built-i
 
 ```
 packages/
-  ├── cli/          # Command-line interface
   ├── core/         # Core authentication library
   └── examples/     # Example implementations
       └── hono-bun/ # Example using Hono and Bun
@@ -41,23 +39,6 @@ bun run dev
 ```
 
 ## Packages
-
-### CLI (@skoly/auth-cli)
-Command-line interface for downloading and setting up authentication in your project.
-
-```bash
-# Using npx (recommended)
-npx @skoly/auth-cli download <adapter>
-
-# Available adapters:
-# - postgres
-# - mysql
-# - sqlite
-
-# After setup:
-npm install pg # or mysql2/better-sqlite3
-export DATABASE_URL=your_database_url
-```
 
 ### Core (@skoly/auth-core)
 The core authentication library that provides:
