@@ -1,59 +1,81 @@
 # @skoly/auth-cli
 
-A CLI tool to download and set up @skoly/auth-core authentication in your project.
+A CLI tool to set up authentication in your Node.js project.
 
 ## Installation
 
 ```bash
-# Using npm
-npm install -g @skoly/auth-cli
+# Install globally
+pnpm install -g @skoly/auth-cli
 
-# Using npx (recommended)
-npx @skoly/auth-cli download <adapter>
+# Or use directly with npx
+npx @skoly/auth-cli init
 ```
 
 ## Features
 
-- 🚀 Quick setup of authentication system
-- 🔒 Secure by default
-- 🛠️ Database adapter selection (postgres, mysql, sqlite)
-- 📦 Copies core source code to your project
-- ⚙️ Creates configuration file
+- 🚀 Interactive setup wizard
+- 🔒 Secure authentication system
+- 🗃️ Database adapter selection (PostgreSQL, MongoDB, MySQL, SQLite)
+- 📂 Generates files directly in your project
+- ⚙️ Configurable authentication settings
+- 🛠️ Fully customizable generated code
 
 ## Usage
 
-1. Download authentication setup:
+1. Initialize authentication setup:
 ```bash
-npx @skoly/auth-cli download <adapter>
+skoly-auth init
 ```
 
-Available adapters:
-- postgres
+2. The CLI will guide you through:
+   - Database selection
+   - Database connection details
+   - Authentication configuration
+   - File generation
 
-2. The CLI will:
-   - Copy core authentication source files
-   - Create skoly.config.json
-   - Provide installation instructions
-
-3. Install required dependencies:
-```bash
-npm install pg # or mysql2/better-sqlite3
+3. The following files will be created in your project:
+```
+auth/
+  ├── auth.ts         # Core authentication logic
+  ├── config.ts       # Authentication configuration
+  ├── types.ts        # TypeScript interfaces and types
+  └── db/
+      └── [database].ts # Database-specific configuration
 ```
 
-4. Set environment variable:
+4. Install required database driver:
 ```bash
-export DATABASE_URL=your_database_url
+# For PostgreSQL
+pnpm install pg
+
+# For MySQL
+pnpm install mysql2
+
+# For SQLite
+pnpm install better-sqlite3
 ```
 
 ## Configuration
 
-The CLI creates a `skoly.config.json` file with your authentication configuration:
+The generated `auth/config.ts` file contains your authentication configuration:
 
-```json
-{
-  "adapter": "postgres",
-  "databaseUrl": ""
-}
+```typescript
+export const authConfig = {
+  jwtSecret: process.env.JWT_SECRET || 'your-secret-key',
+  sessionDuration: '24h',
+  passwordRequirements: {
+    minLength: 8,
+    requireNumbers: true,
+    requireSpecialChars: true
+  }
+};
+```
+
+Set environment variables in your project:
+```bash
+export DATABASE_URL=your_database_url
+export JWT_SECRET=your_jwt_secret
 ```
 
 ## Development

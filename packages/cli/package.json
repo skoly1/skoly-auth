@@ -1,6 +1,6 @@
 {
   "name": "@skoly/auth-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI for setting up authentication in Node.js projects",
   "publishConfig": {
     "access": "public"
@@ -53,6 +53,8 @@
     "zod": "^3.20.2"
   },
   "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/prompts": "^2.4.9",
     "tsup": "^6.6.3",
     "typescript": "^4.9.3"
   }
