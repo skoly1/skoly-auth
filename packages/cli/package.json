@@ -1,15 +1,14 @@
 {
   "name": "@skoly/auth-cli",
-  "version": "0.0.7",
+  "version": "0.1.0",
   "license": "MIT",
   "private": false,
-  "type": "module",
+  "type": "commonjs",
   "bin": {
-    "create-skoly-auth": "./dist/index.js"
+    "create-skoly-auth": "./build/index.js"
   },
   "files": [
     "dist",
-    "templates",
     "README.md"
   ],
   "publishConfig": {
@@ -25,15 +24,20 @@
     "prepublishOnly": "npm run build",
     "publish": "npm publish --access public"
   },
+  "peerDependencies": {
+    "@skoly/auth-core": "*",
+    "pg": "*"
+  },
   "dependencies": {
-    "@skoly/auth-core": "workspace:*",
-    "commander": "^13.0.0",
     "chalk": "^5.3.0",
+    "commander": "^13.0.0",
+    "execa": "^9.5.2",
     "prompts": "^2.4.2"
   },
   "devDependencies": {
-    "tsup": "^8.0.1",
+    "@types/node": "^20.11.16",
     "@types/prompts": "^2.4.9",
-    "@types/node": "^20.11.16"
+    "esbuild": "^0.24.2",
+    "tsup": "^8.0.1"
   }
 }

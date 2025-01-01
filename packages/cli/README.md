@@ -1,82 +1,58 @@
-# create-skoly-auth
+# @skoly/auth-cli
 
-A CLI tool to quickly set up authentication in your Node.js applications using @skoly/auth-core.
+A CLI tool to download and set up @skoly/auth-core authentication in your project.
 
 ## Installation
 
 ```bash
 # Using npm
-npm create skoly-auth@latest
+npm install -g @skoly/auth-cli
 
-# Using yarn
-yarn create skoly-auth
-
-# Using pnpm
-pnpm create skoly-auth
+# Using npx (recommended)
+npx @skoly/auth-cli download <adapter>
 ```
 
 ## Features
 
 - 🚀 Quick setup of authentication system
 - 🔒 Secure by default
-- 🎯 Interactive CLI interface
-- 📦 Automatic dependency installation
-- 🛠️ Framework-specific configurations
+- 🛠️ Database adapter selection (postgres, mysql, sqlite)
+- 📦 Copies core source code to your project
+- ⚙️ Creates configuration file
 
 ## Usage
 
-1. Create a new authentication setup:
+1. Download authentication setup:
 ```bash
-npm create skoly-auth@latest
+npx @skoly/auth-cli download <adapter>
 ```
 
-2. Follow the interactive prompts to:
-   - Choose your framework (Hono, Express, etc.)
-   - Configure database settings
-   - Set up authentication options
+Available adapters:
+- postgres
 
-3. The CLI will:
-   - Create necessary configuration files
-   - Install required dependencies
-   - Set up database adapters
-   - Generate type-safe authentication code
+2. The CLI will:
+   - Copy core authentication source files
+   - Create skoly.config.json
+   - Provide installation instructions
 
-## Commands
-
-### `create-skoly-auth init`
-Initialize a new authentication setup in your project.
-
+3. Install required dependencies:
 ```bash
-create-skoly-auth init
+npm install pg # or mysql2/better-sqlite3
 ```
 
-### `create-skoly-auth add`
-Add authentication to an existing route or component.
-
+4. Set environment variable:
 ```bash
-create-skoly-auth add
-```
-
-### `create-skoly-auth list`
-List all available authentication components and configurations.
-
-```bash
-create-skoly-auth list
+export DATABASE_URL=your_database_url
 ```
 
 ## Configuration
 
-The CLI will create a `skoly.config.json` file in your project root with your authentication configuration:
+The CLI creates a `skoly.config.json` file with your authentication configuration:
 
 ```json
 {
-  "framework": "hono",
-  "database": "postgres",
-  "features": [
-    "jwt",
-    "sessions",
-    "passwordReset"
-  ]
+  "adapter": "postgres",
+  "databaseUrl": ""
 }
 ```
 

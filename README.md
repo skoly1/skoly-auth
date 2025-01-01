@@ -43,17 +43,20 @@ bun run dev
 ## Packages
 
 ### CLI (@skoly/auth-cli)
-Command-line interface for easy setup and configuration of the authentication library.
+Command-line interface for downloading and setting up authentication in your project.
 
 ```bash
-# Install globally
-pnpm add -g @skoly/auth-cli
+# Using npx (recommended)
+npx @skoly/auth-cli download <adapter>
 
-# Initialize in your project
-skoly-auth init
+# Available adapters:
+# - postgres
+# - mysql
+# - sqlite
 
-# Add authentication to your project
-skoly-auth add
+# After setup:
+npm install pg # or mysql2/better-sqlite3
+export DATABASE_URL=your_database_url
 ```
 
 ### Core (@skoly/auth-core)

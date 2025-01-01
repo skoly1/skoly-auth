@@ -3812,10 +3812,8 @@ var source_default = chalk;
 
 // src/commands/download.ts
 var import_fs = require("fs");
-var import_path = __toESM(require("path"), 1);
-var import_url = require("url");
-var import_meta = {};
-var __dirname = import_path.default.dirname((0, import_url.fileURLToPath)(import_meta.url));
+var import_path = __toESM(require("path"));
+var __dirname = import_path.default.resolve();
 var ADAPTERS = {
   postgres: "pg"
   // mysql: "mysql2",
