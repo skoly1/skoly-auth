@@ -17,56 +17,25 @@ export async function generateAuthFiles(dbType: DatabaseType) {
   await fs.ensureDir(dbDir);
   console.log('db directory created');
   
-  // Generate files
+  // Copy files from @skoly/auth-core package
   await Promise.all([
-    fs.writeFile(
-      path.join(authDir, 'auth.ts'),
-      generateAuthFileContent()
+    fs.copyFile(
+      require.resolve('@skoly/auth-core/src/index.ts'),
+      path.join(authDir, 'auth.ts')
     ),
-    fs.writeFile(
-      path.join(authDir, 'db', `${dbType}.ts`),
-      generateDbFileContent(dbType)
+    fs.copyFile(
+      require.resolve('@skoly/auth-core/src/adapters/postgres.ts'),
+      path.join(authDir, 'db', `${dbType}.ts`)
     ),
-    fs.writeFile(
-      path.join(authDir, 'types.ts'),
-      generateTypesFileContent()
+    fs.copyFile(
+      require.resolve('@skoly/auth-core/src/types.ts'),
+      path.join(authDir, 'types.ts')
     ),
     fs.writeFile(
       path.join(authDir, 'config.ts'),
       generateConfigFileContent()
     )
   ]);
-}
-
-function generateAuthFileContent(): string {
-  return `// Core authentication logic
-export * from './types';
-export * from './config';
-`;
-}
-
-function generateDbFileContent(dbType: DatabaseType): string {
-  return `// ${dbType} specific database configuration
-export const dbConfig = {
-  // Add your ${dbType} configuration here
-};
-`;
-}
-
-function generateTypesFileContent(): string {
-  return `// TypeScript interfaces and types
-export interface User {
-  id: string;
-  email: string;
-  password: string;
-}
-
-export interface Session {
-  userId: string;
-  token: string;
-  expiresAt: Date;
-}
-`;
 }
 
 function generateConfigFileContent(): string {
