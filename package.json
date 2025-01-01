@@ -1,12 +1,12 @@
 {
   "name": "skoly-auth",
   "version": "1.0.0",
-  "description": "A modern, type-safe authentication library for Node.js applications with built-in CLI tools.",
+  "description": "A modern, type-safe authentication library for Node.js applications.",
   "main": "index.js",
   "private": true,
   "packageManager": "pnpm@9.15.2",
   "scripts": {
-    "publish": "turbo run publish --filter=@skoly/auth-cli --filter=@skoly/auth-core",
+    "publish": "turbo run publish --filter=@skoly/auth-core",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "test": "turbo run test",
@@ -38,6 +38,7 @@
     "typescript": "^5.7.2"
   },
   "workspaces": [
-    "packages/*"
+    "packages/core",
+    "packages/examples/hono-bun"
   ]
 }
